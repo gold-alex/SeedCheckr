@@ -16,7 +16,9 @@ typedef struct {
   const char* path;    // derivation path shown on screen
   const char* link;    // explorer URL prefix; address is appended (NULL = none)
   char addr[CHAIN_ADDR_MAX];
-} ChainAddr;
+  uint8_t raw[32];     // the bytes behind addr: 20-byte hash for secp256k1 chains, 32 for SOL/SUI/APT
+  uint8_t rawlen;      // 0 on the zpub row; on the legacy xpub row it is the pkh of m/44'/0'/0'/0/0
+} ChainAddr;           // raw feeds the one-scan portfolio QR, see portfolio.h
 
 // Number of entries derive_all() produces.
 int chains_count(void);

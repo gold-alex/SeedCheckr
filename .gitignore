@@ -14,3 +14,8 @@ seedbox/test/vectors.txt
 
 # Arduino IDE build cache
 build/
+seedbox/test/test_portfolio
+seedbox/test/test_qr
+seedbox/test/node_modules/
+seedbox/test/mine.txt
+seedbox/test/ref.txt

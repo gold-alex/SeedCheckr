@@ -10,8 +10,10 @@
  *   2. The device derives public addresses for 20 chains (one EVM address
  *      covers Ethereum, Base, Arbitrum, Polygon, BSC, Optimism, Avalanche...).
  *   3. The seed is zeroed from RAM the moment derivation finishes.
- *   4. Browse addresses as text or QR. Scan the QR with your phone: it opens
- *      a portfolio / explorer page for that address (public data only).
+ *   4. Browse addresses as text or QR. The first entry, "Portfolio", is one
+ *      QR holding every address: scan it and the web page (docs/ in the repo)
+ *      checks all 20 chains for coins at once. Per-chain QRs open that
+ *      chain's explorer. Public data only, either way.
  *
  * Nothing is ever written to flash or sent over USB. Build with
  * Tools > USB Stack > "No USB" so a computer can't even see the device.
@@ -22,10 +24,11 @@
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
-#include "src/qr/qrcode.h"
+#include "src/qr/qrcodegen.h"
 #include "ui_types.h"
 #include "seedcore.h"
 #include "src/chains.h"
+#include "src/portfolio.h"
 
 // ---------------- Pins (match the breadboard) ----------------
 #define TFT_CS    17
@@ -43,6 +46,9 @@
 #define ENC_REVERSE    0                        // 1 if the knob scrolls the wrong way
 #define LONG_PRESS_MS  800
 #define IDLE_WIPE_MS   (5UL * 60UL * 1000UL)    // forget addresses after 5 min of no input
+// Where the Portfolio QR points. The page lives in docs/ in the repo; host it anywhere
+// and change this. Keep it under about 58 characters or the QR stops fitting (see portfolio.h).
+#define PORTFOLIO_URL  "https://gold-alex.github.io/SeedCheckr/#"
 // 1 = landscape, pin header on the left (default). 3 = landscape, header on the right.
 // 0 / 2 = portrait, header top / bottom. Layout adapts to whichever you pick.
 #define TFT_ROTATION   1
@@ -210,29 +216,43 @@ static int runMenu(const char* t, const char* const* items, int n, int sel) {
 }
 
 // ---------------- QR ----------------
-// The QRCode library does not check capacity, so pick the version ourselves.
-// Byte-mode capacity at ECC L (QR spec). v7 = 45x45 is the largest that is
-// still readable on a 128 px tall screen (2 px per module).
-static const int QR_CAP[8] = {0, 17, 32, 53, 78, 106, 134, 154};
+// Nayuki's qrcodegen picks the smallest version that fits. Version 11 (61x61)
+// is the largest that still gets 2 px per module, plus a 1 module quiet zone,
+// on a 128 px tall screen. Dense codes scan fine from 8-12 cm.
+#define QR_MAX_VERSION 11
+static uint8_t qrCode[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
+static uint8_t qrTemp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
 
-// Draws a QR of `text` centered, with a 1 module quiet zone. Returns false if too long.
-static bool drawQR(const char* text) {
-  static uint8_t buf[512];
-  int len = strlen(text), v = 0;
-  for (int i = 1; i <= 7; i++) if (len <= QR_CAP[i]) { v = i; break; }
-  if (!v) return false;
-  QRCode qr;
-  if (qrcode_initText(&qr, buf, v, ECC_LOW, text) != 0) return false;
-  int cells = qr.size + 2;
+// Paints qrCode centered with a 1 module quiet zone.
+static void paintQR() {
+  int size = qrcodegen_getSize(qrCode);
+  int cells = size + 2;
   int s = (SCR_W < SCR_H ? SCR_W : SCR_H) / cells;
-  if (s < 1) return false;
   int px = s * cells;
   int x0 = (SCR_W - px) / 2, y0 = (SCR_H - px) / 2;
   tft.fillRect(x0, y0, px, px, ST77XX_WHITE);
-  for (uint8_t y = 0; y < qr.size; y++)
-    for (uint8_t x = 0; x < qr.size; x++)
-      if (qrcode_getModule(&qr, x, y))
+  for (int y = 0; y < size; y++)
+    for (int x = 0; x < size; x++)
+      if (qrcodegen_getModule(qrCode, x, y))
         tft.fillRect(x0 + (x + 1) * s, y0 + (y + 1) * s, s, s, ST77XX_BLACK);
+}
+
+// An address or explorer link. Returns false if it does not fit.
+static bool drawQR(const char* text) {
+  if (!qrcodegen_encodeText(text, qrTemp, qrCode, qrcodegen_Ecc_LOW, 1, QR_MAX_VERSION,
+                            qrcodegen_Mask_AUTO, true)) return false;
+  paintQR();
+  return true;
+}
+
+// The portfolio link: URL prefix in byte mode, then the base43 payload in
+// alphanumeric mode (5.5 bits per character instead of 8). That is what lets
+// all 20 chains fit in one code. Returns false if it does not fit.
+static bool drawPortfolioQR() {
+  static char payload[PORTFOLIO_TEXT_MAX];
+  if (portfolio_text(gAddr, payload, sizeof payload) < 0) return false;
+  if (!portfolio_qr(PORTFOLIO_URL, payload, qrTemp, qrCode, QR_MAX_VERSION)) return false;
+  paintQR();
   return true;
 }
 
@@ -283,24 +303,52 @@ static bool showAddressQR(int i) {
   }
 }
 
+// Portfolio view. Press = QR with every address, press again = back here, hold = back to list.
+static void showPortfolio() {
+  for (;;) {
+    clearScreen();
+    drawTitle("Portfolio");
+    textAt(2, 16, "All 20 addresses in", C_FG);
+    textAt(2, 26, "one QR, public only.", C_FG);
+    textAt(2, 42, "Scan: the web page", C_DIM);
+    textAt(2, 52, "checks every chain.", C_DIM);
+    textAt(2, 68, "BTC: 1st addr only.", C_DIM);
+    textAt(2, SCR_H - 14, "press: QR  hold: back", C_DIM);
+    Ev e = waitEvent();
+    if (isBack(e)) return;
+    if (e != EV_PRESS) continue;
+    clearScreen();
+    if (!drawPortfolioQR()) textAt(4, 60, "QR failed", C_BAD);
+    const char* tag = "ALL";
+    for (int k = 0; tag[k]; k++) { char c[2] = {tag[k], 0}; textAt(2, 2 + k * 10, c, C_DIM); }
+    for (;;) {
+      e = waitEvent();
+      if (e == EV_PRESS) break;
+      if (isBack(e)) return;
+    }
+  }
+}
+
 static void browseAddresses() {
-  static const char* items[33];
+  static const char* items[34];
   int n = chains_count();
-  for (int i = 0; i < n; i++) items[i] = gAddr[i].name;
-  items[n] = "Wipe & exit";
+  items[0] = "Portfolio (all chains)";
+  for (int i = 0; i < n; i++) items[i + 1] = gAddr[i].name;
+  items[n + 1] = "Wipe & exit";
   int sel = 0;
   while (gLoaded) {
-    sel = runMenu("Addresses", items, n + 1, sel);
-    if (sel == MENU_BACK) { sel = n; continue; }    // hold just jumps to "Wipe & exit"
-    if (sel < 0 || sel == n) break;
-    int i = sel;
+    sel = runMenu("Addresses", items, n + 2, sel);
+    if (sel == MENU_BACK) { sel = n + 1; continue; }    // hold just jumps to "Wipe & exit"
+    if (sel < 0 || sel == n + 1) break;
+    if (sel == 0) { showPortfolio(); continue; }
+    int i = sel - 1;
     while (i >= 0 && gLoaded) {
       int r = showAddressText(i);
       if (r < 0) break;
       if (r & 0x100) { i = r & 0xFF; if (!showAddressQR(i)) break; }
       else i = r;
     }
-    if (i >= 0) sel = i & 0xFF;
+    if (i >= 0) sel = (i & 0xFF) + 1;
   }
   wipeAll();
   clearScreen();
@@ -466,7 +514,7 @@ void loop() {
   switch (sel) {
     case 0: if (enterSeed(12)) browseAddresses(); break;
     case 1: if (enterSeed(24)) browseAddresses(); break;
-    case 2: message("SeedBox v0.2", "20 chains, trezor-crypto", "seed wiped after derive", C_FG); break;
+    case 2: message("SeedBox v0.3", "20 chains, one-scan QR", "seed wiped after derive", C_FG); break;
     default: break;
   }
 }

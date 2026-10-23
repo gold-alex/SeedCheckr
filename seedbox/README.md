@@ -1,6 +1,6 @@
 # SeedBox
 
-Offline box: type a 12/24-word seed in with the knob, it derives your **public** addresses for 20 chains and shows them as text and QR. Scan the QR with your phone to open a portfolio/explorer page for that address. The seed is zeroed from RAM the moment derivation finishes, nothing ever touches flash, and the build has USB disabled so a computer can't talk to it.
+Offline box: type a 12/24-word seed in with the knob, it derives your **public** addresses for 20 chains and shows them as text and QR. The first entry, **Portfolio**, is one QR that carries every address: scan it with your phone and the web page in `docs/` checks all 20 chains and tells you, Maury style, whether you ARE or are NOT in possession of coins. Per-chain QRs open that chain's explorer. The seed is zeroed from RAM the moment derivation finishes, nothing ever touches flash, and the build has USB disabled so a computer can't talk to it.
 
 Pico 2 + 1.8" ST7735 (Lee's PID 18403) + Bourns PEC11R encoder.
 
@@ -17,7 +17,7 @@ Pico 2 + 1.8" ST7735 (Lee's PID 18403) + Bourns PEC11R encoder.
 1. Arduino IDE > File > Preferences > Additional boards manager URLs:
    `https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json`
 2. Boards Manager: install **Raspberry Pi Pico/RP2040/RP2350** (Earle Philhower). Built against 6.3.0.
-3. Library Manager: install **Adafruit ST7735 and ST7789 Library** (pulls in GFX + BusIO). That's the only library; the QR encoder and trezor-crypto are vendored in `src/`.
+3. Library Manager: install **Adafruit ST7735 and ST7789 Library** (pulls in GFX + BusIO). That's the only library; the QR encoder (Nayuki's qrcodegen) and trezor-crypto are vendored in `src/`.
 4. Tools > Board > **Raspberry Pi Pico 2**. Tools > USB Stack > **No USB**.
 5. Open `seedbox.ino`, Upload with BOOTSEL held (No USB means every upload needs BOOTSEL).
 
@@ -52,9 +52,24 @@ Turn = move. Press = select. Hold 0.8 s = back / backspace / cancel.
 
 - **Entering words:** pick letters until the list is short enough, then pick the word. Hold = delete a letter, then back a word, then cancel. Checksum is checked after the last word.
 - **Review screen:** all words shown once more before deriving. Press = derive, hold = redo the last word. This exists because the BIP39 checksum lets 1 in 16 wrong words through on a 12-word seed (1 in 256 on 24); a wrong word just gives you empty addresses with no error, so look.
+- **Portfolio (top of the list):** press = one QR with all 20 addresses. Scan it, the web page does the rest (next section). Press = back, hold = back to list.
 - **Address text screen:** turn = next/prev chain, press = QR, hold = back to list.
 - **QR screen:** turn = toggle LINK (opens explorer/portfolio page) vs RAW (just the address, for pasting into any app). Press = back.
 - Idle 5 min = addresses wiped. "Wipe & exit" at the bottom of the list does it now (holding on the list jumps the cursor there; it doesn't wipe by itself).
+
+## The one-scan check (the website)
+
+`docs/` in the repo is a static page, served by GitHub Pages at the address in `PORTFOLIO_URL` near the top of `seedbox.ino`. Host it anywhere else and change that one line (keep it under about 58 characters or the QR stops fitting).
+
+How it works:
+
+- The Portfolio QR is the page URL plus, after the `#`, a 257-byte payload: a version byte and the raw bytes behind each address (20-byte hashes for the secp256k1 chains, 32-byte keys for SOL/SUI/APT). Layout in `src/portfolio.c`, mirrored in `docs/decode.js`.
+- The payload is sent as base43 text in the QR's alphanumeric mode (5.5 bits per character instead of 8), after a byte-mode segment for the URL. That is what makes all 20 chains fit in one version 11 code (61x61 modules, 2 px each on this screen). The eight Cosmos chains share one key and INJ is the ETH key, so the page expands those itself; they cost nothing in the QR.
+- Everything after `#` stays in the phone. Browsers never send the fragment to the server, so GitHub (or whoever hosts the page) never sees the addresses. The page then asks public RPCs and explorers (publicnode, mempool.space, TronGrid, cosmos.directory, XRPL Cluster, CoinGecko for prices...) straight from the browser, with no API keys. Those services do see the addresses, same as any explorer would.
+- Verdict: native coins and major stablecoins (USDC, USDT) count. Airdropped tokens are listed but do not count, because every used Solana or Tron wallet has spam tokens. 29 networks are checked: Bitcoin (first native segwit and first legacy address), 11 EVM networks on the one EVM address, Solana, Tron, XRP, Sui, Aptos, Litecoin, Dogecoin, 8 Cosmos chains and Injective.
+- Bitcoin and Litecoin: the page only sees the first receive address, because a zpub does not fit in the QR. A wallet that has been used may hold coins on later addresses; the BTC zpub entry on the device covers that through Blockchair.
+
+With no `#` the page explains itself and offers a demo with a famous public wallet.
 
 ## Chains
 
@@ -82,8 +97,9 @@ Not included: Cardano, Polkadot, TON, XMR (each a different key scheme; Monero i
 
 - SHA-256, BIP39 checksum, word search: 306 vectors vs the reference `mnemonic` Python library (`test/`).
 - Every chain: 30 random 12/24-word mnemonics, all 20 addresses byte-identical to the independent `bip_utils` library, plus the published test vectors for the `abandon x11 about` mnemonic.
-- QR: every version 1-7 encodes and decodes back with OpenCV.
-- Compiled with the real Pico toolchain (arduino-pico 6.3.0, gnu23): 125 KB flash, 12 KB RAM, zero warnings in project files.
+- One-scan round trip (`test/verify_site.js`): 20 random mnemonics through the device's C code, the payload decoded with the page's own `decode.js`, all 20 addresses byte-identical; the full URL encoded with the device's QR code and read back with jsQR, an unrelated decoder. Longest payload seen: 378 characters, always version 11.
+- QR: the per-chain codes (addresses, explorer links, the 111-char zpub) encode and decode back the same way.
+- Compiled with the real Pico toolchain (arduino-pico 6.3.0, gnu23, No USB): 129 KB flash, 14 KB RAM, zero warnings in project files. `seedbox.ino.uf2` in this folder is that build.
 - Layout geometry checked numerically for 160x128 and 128x160.
 - Not tested: the physical display init and knob direction (no hardware here). Both are one-line fixes listed below.
 
@@ -94,7 +110,7 @@ Not included: Cardano, Polkadot, TON, XMR (each a different key scheme; Monero i
 - **After power-off:** nothing to extract. Flash is never written; SRAM is gone in seconds.
 - **While powered with a seed loaded:** someone with the DEBUG header (SWD) or a reset into BOOTSEL could in theory dump RAM during those few seconds. If that bothers you, the RP2350 can permanently disable SWD via OTP.
 - **USB:** built with No USB. A computer sees nothing. Power it from a bank or battery. Flashing needs the physical BOOTSEL button.
-- **Privacy, not funds:** an xpub lets anyone who sees it enumerate all your BTC addresses. Scan the BTC zpub only into something you trust.
+- **Privacy, not funds:** an xpub lets anyone who sees it enumerate all your BTC addresses. Scan the BTC zpub only into something you trust. The Portfolio QR holds single addresses, not xpubs, and only public ones; it cannot be used to spend anything.
 - **No secure element.** This is "nothing worth stealing" security, not tamper-resistant hardware.
 - **Unaudited hobby code.** Read `seedbox.ino` and `src/chains.c` (about 600 lines together) before trusting it with a real seed. The rest is Trezor's shipping crypto library, vendored unmodified except: caches off, `aesopt.h` C++ branch removed, one `<sha2.h>` include quoted.
 
@@ -104,8 +120,10 @@ Not included: Cardano, Polkadot, TON, XMR (each a different key scheme; Monero i
 - Upside down: `#define TFT_ROTATION 3`. Vertical mount: 0 or 2.
 - Knob scrolls backwards: `#define ENC_REVERSE 1`.
 - Skipped clicks: add the Bourns RC filter (10k pull-up, 10k series, 10nF to GND) on A and B.
-- QR won't scan: zpub/xpub QRs are the dense ones (2 px per module). Hold the phone 8-12 cm away, dim the room, or scan RAW instead of LINK. Everything else is 3+ px per module and scans easily.
+- QR won't scan: the Portfolio code and the zpub/xpub codes are the dense ones (2 px per module). Hold the phone 8-12 cm away, dim the room, or for a single chain scan RAW instead of LINK. Everything else is 3+ px per module and scans easily.
+- Portfolio screen says "QR failed": `PORTFOLIO_URL` is too long for the code. Shorten the URL.
 
-## Next step
+## Ideas
 
-Your own portfolio page: QR encodes `https://yoursite/#e=0x..&s=..&t=..` (fragment, so addresses never hit server logs), the page fans out to Alchemy/Zerion/Helius/Blockchair APIs and shows every chain on one screen. Keep it under ~150 characters per QR for this display; EVM + SOL + TRX fits.
+- A short custom domain for `PORTFOLIO_URL` frees about 20 bytes of QR for more chains.
+- With an indexer key (Alchemy, Helius) the page could list every ERC-20 and SPL token instead of just the stablecoins. It would have to live in the page source, so it is left out on purpose.

@@ -1,0 +1,12 @@
+{
+  "name": "seedbox-host-tests",
+  "private": true,
+  "description": "jsQR is only used by verify_site.js to read back the QR the device would draw.",
+  "scripts": {
+    "build": "./build.sh",
+    "verify": "node verify_site.js 10"
+  },
+  "dependencies": {
+    "jsqr": "^1.4.0"
+  }
+}

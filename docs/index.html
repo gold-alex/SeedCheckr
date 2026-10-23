@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Results Are In</title>
+<meta name="description" content="Scan the SeedBox portfolio QR and find out whether that seed is in possession of coins.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230b1f5c'/%3E%3Crect x='10' y='26' width='44' height='28' rx='3' fill='%23f7f1e3'/%3E%3Cpath d='M10 28l22 15 22-15' fill='none' stroke='%23d9cfb8' stroke-width='3'/%3E%3Ccircle cx='32' cy='41' r='6' fill='%23f5c542'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --stage: #0b1f5c;
+    --stage-deep: #061239;
+    --spot: #2b4ec2;
+    --gold: #f5c542;
+    --gold-deep: #c8971e;
+    --paper: #f7f1e3;
+    --paper-edge: #d9cfb8;
+    --ink: #1a1530;
+    --ink-soft: #5a5570;
+    --text: #f3f2f8;
+    --text-dim: #b8bdda;
+    --yes: #2fd57a;
+    --no: #ff4d4d;
+    --rule: rgba(243, 242, 248, 0.14);
+    --display: "Anton", "Impact", "Arial Narrow", sans-serif;
+    --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.45;
+    color: var(--text);
+    background: var(--stage-deep);
+    background-image: radial-gradient(120% 70% at 50% -10%, var(--spot) 0%, var(--stage) 45%, var(--stage-deep) 100%);
+    background-repeat: no-repeat;
+  }
+  a { color: var(--gold); }
+  a:focus-visible, button:focus-visible, li[tabindex]:focus-visible {
+    outline: 3px solid var(--gold);
+    outline-offset: 3px;
+  }
+  [hidden] { display: none !important; }
+
+  /* ---- lower third ---- */
+  .lower-third {
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 22px 16px 0;
+  }
+  .lower-third .bar {
+    flex: 0 0 10px;
+    background: var(--gold);
+    box-shadow: 0 0 24px rgba(245, 197, 66, 0.45);
+  }
+  .lower-third h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(30px, 8vw, 40px);
+    line-height: 1;
+    letter-spacing: 0.01em;
+    margin: 0;
+    text-transform: uppercase;
+  }
+  .lower-third .sub {
+    margin: 4px 0 0;
+    color: var(--text-dim);
+    font-size: 15px;
+  }
+  .lower-third .sub span { color: var(--text); font-weight: 600; }
+
+  main {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 0 16px 48px;
+  }
+
+  /* ---- the envelope ---- */
+  .stage {
+    display: grid;
+    place-items: center;
+    padding: 44px 0 24px;
+    min-height: 300px;
+  }
+  .envelope {
+    position: relative;
+    width: min(100%, 360px);
+    aspect-ratio: 1.55;
+    background: var(--paper);
+    border-radius: 6px;
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45), 0 2px 0 var(--paper-edge);
+    transform: rotate(-2deg);
+    perspective: 900px;
+  }
+  .envelope .flap {
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 55%;
+    background: linear-gradient(180deg, #efe6d2, #e4d9c1);
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+    transform-origin: top;
+    transition: transform 0.7s cubic-bezier(0.6, 0, 0.3, 1);
+    z-index: 2;
+  }
+  .envelope .seal {
+    position: absolute;
+    left: 50%; top: 55%;
+    width: 46px; height: 46px;
+    margin: -23px 0 0 -23px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #ffe08a, var(--gold) 55%, var(--gold-deep));
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+    z-index: 3;
+    transition: opacity 0.3s;
+  }
+  .envelope .letter {
+    position: absolute;
+    inset: 12% 8% 10%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 10px;
+    color: var(--ink);
+    z-index: 1;
+  }
+  .envelope .stamp {
+    font-family: var(--display);
+    font-size: 26px;
+    line-height: 1;
+    margin: 0;
+    color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .envelope .progress-text {
+    margin: 0;
+    font-size: 15px;
+    color: var(--ink-soft);
+  }
+  .meter {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--paper-edge);
+    overflow: hidden;
+  }
+  .meter > div {
+    height: 100%;
+    width: 0%;
+    background: var(--ink);
+    transition: width 0.25s;
+  }
+  .envelope.open .flap { transform: rotateX(180deg); }
+  .envelope.open .seal { opacity: 0; }
+
+  @keyframes fidget {
+    0%, 86%, 100% { transform: rotate(-2deg); }
+    90% { transform: rotate(-1deg) translateY(-2px); }
+    94% { transform: rotate(-3deg) translateY(1px); }
+  }
+  .envelope.checking { animation: fidget 2.6s ease-in-out infinite; }
+
+  /* ---- the verdict ---- */
+  .verdict {
+    text-align: center;
+    padding: 36px 0 20px;
+  }
+  .verdict .case-line {
+    margin: 0 0 10px;
+    color: var(--text-dim);
+    font-size: 18px;
+  }
+  .verdict .case-line span { color: var(--text); font-weight: 600; }
+  .verdict h2 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(54px, 17vw, 108px);
+    line-height: 0.92;
+    margin: 0;
+    text-transform: uppercase;
+    color: var(--paper);
+    text-shadow: 0 6px 30px rgba(0, 0, 0, 0.45);
+  }
+  .verdict h2 em {
+    font-style: normal;
+    display: block;
+  }
+  .verdict.yes h2 em { color: var(--yes); text-shadow: 0 0 40px rgba(47, 213, 122, 0.55); }
+  .verdict.no h2 em { color: var(--no); text-shadow: 0 0 40px rgba(255, 77, 77, 0.5); }
+  .verdict .sub {
+    margin: 22px auto 0;
+    max-width: 34ch;
+    font-size: 19px;
+    font-weight: 500;
+  }
+  .verdict .fine {
+    margin: 10px auto 0;
+    max-width: 40ch;
+    color: var(--text-dim);
+    font-size: 15px;
+  }
+  @keyframes stamp {
+    0% { transform: scale(1.7) rotate(-7deg); opacity: 0; }
+    55% { transform: scale(0.96) rotate(1deg); opacity: 1; }
+    100% { transform: none; opacity: 1; }
+  }
+  .verdict.animate h2 { animation: stamp 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+  .verdict.animate .sub, .verdict.animate .fine { animation: rise 0.5s 0.45s ease-out both; }
+
+  /* ---- case file ---- */
+  .casefile { padding-top: 22px; }
+  .casefile h3 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 24px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    margin: 0 0 4px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--gold);
+  }
+  .casefile ul { list-style: none; margin: 0; padding: 0; }
+  .casefile li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--rule);
+    cursor: pointer;
+  }
+  .casefile li.has-coins { border-left: 4px solid var(--yes); padding-left: 10px; }
+  .casefile li .name { font-weight: 600; min-width: 0; }
+  .casefile li .addr {
+    grid-column: 1;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    overflow-wrap: anywhere;
+  }
+  .casefile li .amount {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    text-align: right;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .casefile li .amount .h { display: block; }
+  .casefile li .amount .usd { display: block; color: var(--text-dim); font-size: 14px; font-weight: 400; }
+  .casefile li .amount.none { color: var(--text-dim); font-weight: 400; }
+  .casefile li .amount.failed { color: var(--gold); font-weight: 400; }
+  .casefile li .more {
+    grid-column: 1 / -1;
+    margin-top: 6px;
+    font-size: 15px;
+    color: var(--text-dim);
+  }
+  .casefile li .more a { margin-left: 10px; white-space: nowrap; }
+  .casefile li:not(.expanded) .more { display: none; }
+  .casefile li:not(.expanded) .addr.full { display: none; }
+  .casefile li.expanded .addr.short { display: none; }
+  .note { color: var(--text-dim); font-size: 15px; margin: 14px 0 0; }
+
+  /* ---- landing / error ---- */
+  .plain { padding: 40px 0 20px; }
+  .plain h2 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: clamp(36px, 10vw, 56px);
+    line-height: 0.95;
+    margin: 0 0 16px;
+    text-transform: uppercase;
+  }
+  .plain p { max-width: 60ch; margin: 0 0 12px; }
+  .plain .err { color: var(--no); }
+
+  footer {
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 0 16px 32px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+  footer p { margin: 0; }
+
+  #confetti {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    display: none;
+    z-index: 10;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .envelope.checking { animation: none; }
+    .envelope .flap, .meter > div { transition: none; }
+    .verdict.animate h2, .verdict.animate .sub, .verdict.animate .fine { animation: none; }
+  }
+</style>
+</head>
+<body>
+<header class="lower-third">
+  <div class="bar" aria-hidden="true"></div>
+  <div>
+    <h1>The results are in</h1>
+    <p class="sub">SeedCheckr <span id="case-id"></span></p>
+  </div>
+</header>
+
+<main>
+  <section id="stage" class="stage" hidden>
+    <div class="envelope checking" id="envelope">
+      <div class="flap" aria-hidden="true"></div>
+      <div class="seal" aria-hidden="true"></div>
+      <div class="letter">
+        <p class="stamp">Results</p>
+        <p class="progress-text" id="progress-text" aria-live="polite">Checking 29 networks</p>
+        <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="29" aria-valuenow="0" id="meter"><div id="meter-fill"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="verdict" class="verdict" hidden>
+    <p class="case-line">In the case of <span id="case-wallet"></span>,</p>
+    <h2 id="verdict-text"></h2>
+    <p class="sub" id="verdict-sub"></p>
+    <p class="fine" id="verdict-fine"></p>
+  </section>
+
+  <section id="casefile" class="casefile" hidden>
+    <h3>Case file</h3>
+    <ul id="rows"></ul>
+    <p class="note" id="casefile-note"></p>
+  </section>
+
+  <section id="landing" class="plain" hidden>
+    <h2>Nothing to check yet.</h2>
+    <p>Scan the Portfolio QR on your SeedBox. It carries the public addresses for all 20 chains in the part of the link after the #, which your phone never sends to this site's server.</p>
+    <p><a id="demo-link" href="#">See a demo with a famous public wallet</a></p>
+  </section>
+
+  <section id="error" class="plain" hidden>
+    <h2>That is not a SeedBox QR.</h2>
+    <p class="err" id="error-text"></p>
+    <p>Scan the Portfolio entry at the top of the address list on the device. Per-chain QRs open that chain's explorer instead.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Public addresses only. Balances come straight from public RPCs and explorers into your browser; nothing is stored anywhere. The verdict counts native coins and major stablecoins, not airdropped tokens. <a href="https://github.com/gold-alex/SeedCheckr">Source</a>.</p>
+</footer>
+
+<canvas id="confetti" aria-hidden="true"></canvas>
+<script src="decode.js"></script>
+<script src="ata.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
