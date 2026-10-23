@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# loose duplicates of what's in seedbox/ (kept on disk, not tracked)
+/seedbox.zip
+/seedbox.uf2
+/SEEDBOX_README.md
+
+# host-side test build outputs (see seedbox/test/README.md)
+seedbox/test/obj_*.o
+seedbox/test/test_seedcore
+seedbox/test/test_chains
+seedbox/test/vectors.txt
+
+# Arduino IDE build cache
+build/

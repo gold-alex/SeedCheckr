@@ -1,0 +1,37 @@
+// chains.h - derive public addresses / extended public keys for many chains
+// from a BIP39 mnemonic. Plain C on top of trezor-crypto. Private key material
+// exists only inside derive_all() and is zeroed before it returns.
+#pragma once
+#include <stdint.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define CHAIN_ADDR_MAX 120   // longest output is a 111-char zpub/xpub
+
+typedef struct {
+  const char* name;    // short label for the menu, e.g. "ETH / all EVM"
+  const char* path;    // derivation path shown on screen
+  const char* link;    // explorer URL prefix; address is appended (NULL = none)
+  char addr[CHAIN_ADDR_MAX];
+} ChainAddr;
+
+// Number of entries derive_all() produces.
+int chains_count(void);
+
+// mnemonic: space separated words. passphrase: "" for none.
+// out must have room for chains_count() entries.
+// progress(done,total) is called between chains so the UI can draw a bar; may be NULL.
+// Returns 0 on success.
+int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
+               void (*progress)(int done, int total));
+
+// Optional RNG hook required by trezor-crypto's link step (only used for signing,
+// which this device never does). Fill with anything; defaults to zeros.
+void chains_set_rng(void (*fill)(uint8_t* buf, size_t len));
+
+#ifdef __cplusplus
+}
+#endif
