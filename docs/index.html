@@ -272,6 +272,14 @@
   .casefile li:not(.expanded) .addr.full { display: none; }
   .casefile li.expanded .addr.short { display: none; }
   .note { color: var(--text-dim); font-size: 15px; margin: 14px 0 0; }
+  .nothing { margin-top: 6px; }
+  .nothing summary {
+    cursor: pointer;
+    padding: 12px 0;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--rule);
+  }
+  .nothing summary:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
 
   /* ---- landing / error ---- */
   .plain { padding: 40px 0 20px; }
@@ -329,7 +337,7 @@
       <div class="letter">
         <p class="stamp">Results</p>
         <p class="progress-text" id="progress-text" aria-live="polite">Checking the networks</p>
-        <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="46" aria-valuenow="0" id="meter"><div id="meter-fill"></div></div>
+        <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="150" aria-valuenow="0" id="meter"><div id="meter-fill"></div></div>
       </div>
     </div>
   </section>
@@ -344,12 +352,16 @@
   <section id="casefile" class="casefile" hidden>
     <h3>Case file</h3>
     <ul id="rows"></ul>
+    <details id="nothing-wrap" class="nothing" hidden>
+      <summary id="nothing-summary"></summary>
+      <ul id="rows-nothing"></ul>
+    </details>
     <p class="note" id="casefile-note"></p>
   </section>
 
   <section id="landing" class="plain" hidden>
     <h2>Nothing to check yet.</h2>
-    <p>Scan the Portfolio QR on your SeedBox. It carries the public addresses for all 20 chains in the part of the link after the #, which your phone never sends to this site's server.</p>
+    <p>Scan the Portfolio QR on your SeedBox. It carries the device's public addresses in the part of the link after the #, which your phone never sends to this site's server. The page checks every network those addresses work on, well over a hundred, from Bitcoin and its forks to the newest Ethereum layer 2s.</p>
     <p><a id="demo-link" href="#">See a demo with a famous public wallet</a></p>
   </section>
 

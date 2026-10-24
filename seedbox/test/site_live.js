@@ -80,7 +80,7 @@ vm.runInThisContext(appSrc, { filename: 'app.js' });
 (async () => {
   const t0 = Date.now();
   const q = globalThis.document.querySelector;
-  for (const s of ['#casefile', '#error', '#error-text', '#case-id', '#verdict', '#verdict-text', '#verdict-sub', '#verdict-fine', '#rows']) q(s);
+  for (const s of ['#casefile', '#error', '#error-text', '#case-id', '#verdict', '#verdict-text', '#verdict-sub', '#verdict-fine', '#rows', '#rows-nothing', '#nothing-wrap', '#nothing-summary']) q(s);
   while (Date.now() - t0 < 90000) {
     if (!els['#casefile'].hidden || !els['#error'].hidden) break;
     await new Promise((r) => setTimeout(r, 200));
@@ -94,6 +94,8 @@ vm.runInThisContext(appSrc, { filename: 'app.js' });
   console.log(els['#verdict-sub'].textContent);
   console.log(els['#verdict-fine'].textContent);
   console.log('=== case file ===');
+  const quiet = els['#rows-nothing'].children;
+  console.log('(collapsed: ' + els['#nothing-summary'].textContent + ': ' + quiet.map((li) => li.children[0].textContent).join(', ') + ')');
   for (const li of els['#rows'].children) {
     const name = li.children.find((c) => c.className === 'name');
     const amount = li.children.find((c) => c.className === 'amount');

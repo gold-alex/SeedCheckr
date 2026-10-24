@@ -27,6 +27,17 @@
     ['atom', 'cosmos'], ['osmo', 'osmo'], ['tia', 'celestia'], ['dydx', 'dydx'],
     ['sei', 'sei'], ['akt', 'akash'], ['juno', 'juno'], ['stars', 'stars'],
     ['noble', 'noble'], ['ntrn', 'neutron'], ['strd', 'stride'], ['axl', 'axelar'],
+    ['atone', 'atone'], ['bbn', 'bbn'], ['cheqd', 'cheqd'], ['huahua', 'chihuahua'], ['fet', 'fetch'],
+    ['grav', 'gravity'], ['jkl', 'jkl'], ['kyve', 'kyve'], ['nibi', 'nibi'], ['nls', 'nolus'],
+    ['orai', 'orai'], ['pasg', 'pasg'], ['xprt', 'persistence'], ['regen', 'regen'], ['saga', 'saga'],
+    ['seda', 'seda'], ['dvpn', 'sent'], ['ctk', 'shentu'], ['somm', 'somm'], ['union', 'union'],
+    ['ward', 'warden'], ['xion', 'xion'], ['arch', 'archway'], ['aura', 'aura'], ['lore', 'gitopia'],
+    ['pokt', 'pokt'],
+  ];
+  // Cosmos chains on the ETH key (slip44 60): bech32 of the EVM address's 20 bytes.
+  const COSMOS_ETH = [
+    ['dym', 'dym'], ['islm', 'haqq'], ['xpla', 'xpla'], ['zeta', 'zeta'], ['om', 'mantra'],
+    ['aioz', 'aioz'], ['heart', 'human'], ['rio', 'realio'], ['shido', 'shido'],
   ];
 
   // ---- bytes ----
@@ -186,6 +197,8 @@
   async function addressesFrom(p) {
     const cosmos = {};
     for (const [k, hrp] of COSMOS) cosmos[k] = bech32Encode(hrp, toWords(p.cosmos));
+    const cosmosEth = {};
+    for (const [k, hrp] of COSMOS_ETH) cosmosEth[k] = bech32Encode(hrp, toWords(p.evm));
     return {
       evm: eip55(p.evm),
       inj: bech32Encode('inj', toWords(p.evm)),
@@ -196,6 +209,7 @@
       sol: base58(p.sol),
       trx: await base58check(concat(Uint8Array.of(0x41), p.trx)),
       cosmos,
+      cosmosEth,
       xrp: xrpAlphabet(await base58check(concat(Uint8Array.of(0x00), p.xrp))),
       sui: '0x' + bytesToHex(p.sui),
       apt: '0x' + bytesToHex(p.apt),

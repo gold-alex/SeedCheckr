@@ -18,10 +18,10 @@
   // browser. rpcs: the first that answers is used, so one flaky public node does not
   // lose a network.
   const EVM = [
-    { key: 'eth', name: 'Ethereum', rpcs: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://etherscan.io/address/',
+    { key: 'eth', name: 'Ethereum', rpcs: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://rpc.flashbots.net', 'https://1rpc.io/eth'], symbol: 'ETH', price: 'ethereum', explorer: 'https://etherscan.io/address/',
       tokens: [t('USDC', '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 6, 'usd-coin'), t('USDT', '0xdAC17F958D2ee523a2206206994597C13D831ec7', 6, 'tether')] },
-    { key: 'base', name: 'Base', rpcs: ['https://base-rpc.publicnode.com', 'https://base.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://basescan.org/address/',
-      tokens: [t('USDC', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 6, 'usd-coin')] },
+    { key: 'base', name: 'Base', rpcs: ['https://base-rpc.publicnode.com', 'https://base.drpc.org', 'https://mainnet.base.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://basescan.org/address/',
+      tokens: [t('USDC', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 6, 'usd-coin'), t('USDT', '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', 6, 'tether')] },
     { key: 'arb', name: 'Arbitrum', rpcs: ['https://arbitrum-one-rpc.publicnode.com', 'https://arbitrum.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://arbiscan.io/address/',
       tokens: [t('USDC', '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', 6, 'usd-coin'), t('USDT', '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', 6, 'tether'), t('USDC.e', '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8', 6, 'usd-coin')] },
     { key: 'op', name: 'Optimism', rpcs: ['https://optimism-rpc.publicnode.com', 'https://optimism.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://optimistic.etherscan.io/address/',
@@ -32,14 +32,18 @@
       tokens: [t('USDT', '0x55d398326f99059fF775485246999027B3197955', 18, 'tether'), t('USDC', '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', 18, 'usd-coin')] },
     { key: 'avax', name: 'Avalanche', rpcs: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://avalanche.drpc.org'], symbol: 'AVAX', price: 'avalanche-2', explorer: 'https://snowscan.xyz/address/',
       tokens: [t('USDC', '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', 6, 'usd-coin'), t('USDT', '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', 6, 'tether')] },
-    { key: 'linea', name: 'Linea', rpcs: ['https://linea-rpc.publicnode.com', 'https://linea.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://lineascan.build/address/', tokens: [] },
-    { key: 'scroll', name: 'Scroll', rpcs: ['https://scroll-rpc.publicnode.com', 'https://scroll.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://scrollscan.com/address/', tokens: [] },
-    { key: 'gnosis', name: 'Gnosis', rpcs: ['https://gnosis-rpc.publicnode.com', 'https://gnosis.drpc.org'], symbol: 'xDAI', price: 'xdai', explorer: 'https://gnosisscan.io/address/', tokens: [] },
-    { key: 'blast', name: 'Blast', rpcs: ['https://blast-rpc.publicnode.com', 'https://blast.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://blastscan.io/address/', tokens: [] },
+    { key: 'linea', name: 'Linea', rpcs: ['https://linea-rpc.publicnode.com', 'https://linea.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://lineascan.build/address/',
+      tokens: [t('USDC', '0x176211869cA2b568f2A7D4EE941E073a821EE1ff', 6, 'usd-coin'), t('USDT', '0xA219439258ca9da29E9Cc4cE5596924745e12B93', 6, 'tether')] },
+    { key: 'scroll', name: 'Scroll', rpcs: ['https://scroll-rpc.publicnode.com', 'https://scroll.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://scrollscan.com/address/',
+      tokens: [t('USDC', '0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4', 6, 'usd-coin'), t('USDT', '0xf55BEC9cafDbE8730f096Aa55dad6D22d44099Df', 6, 'tether')] },
+    { key: 'gnosis', name: 'Gnosis', rpcs: ['https://gnosis-rpc.publicnode.com', 'https://gnosis.drpc.org'], symbol: 'xDAI', price: 'xdai', explorer: 'https://gnosisscan.io/address/',
+      tokens: [t('USDC', '0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83', 6, 'usd-coin'), t('USDC.e', '0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0', 6, 'usd-coin'), t('USDT', '0x4ECaBa5870353805a9F068101A40E0f32ed605C6', 6, 'tether')] },
+    { key: 'blast', name: 'Blast', rpcs: ['https://blast-rpc.publicnode.com', 'https://blast.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://blastscan.io/address/',
+      tokens: [t('USDB', '0x4300000000000000000000000000000000000003', 18, 'usdb')] },
     { key: 'zksync', name: 'zkSync Era', rpcs: ['https://mainnet.era.zksync.io', 'https://zksync.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://explorer.zksync.io/address/',
       tokens: [t('USDC', '0x1d17CBcF0D6D143135aE902365D2E5e2A16538D4', 6, 'usd-coin'), t('USDT', '0x493257fD37EDB34451f62EDf8D2a0C418852bA4C', 6, 'tether'), t('USDC.e', '0x3355df6D4c9C3035724Fd0e3914dE96A5a83aaf4', 6, 'usd-coin')] },
     { key: 'mantle', name: 'Mantle', rpcs: ['https://mantle-rpc.publicnode.com', 'https://rpc.mantle.xyz'], symbol: 'MNT', price: 'mantle', explorer: 'https://mantlescan.xyz/address/',
-      tokens: [t('USDC', '0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9', 6, 'usd-coin'), t('USDT', '0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE', 6, 'tether')] },
+      tokens: [t('USDC', '0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9', 6, 'usd-coin'), t('USDT', '0x201EBa5CC46D216Ce6DC03F6a759e8E766e956aE', 6, 'tether'), t('USDT0', '0x779Ded0c9e1022225f8E0630b35a9b54bE713736', 6, 'usdt0')] },
     { key: 'sonic', name: 'Sonic', rpcs: ['https://sonic-rpc.publicnode.com', 'https://rpc.soniclabs.com'], symbol: 'S', price: 'sonic-3', explorer: 'https://sonicscan.org/address/',
       tokens: [t('USDC', '0x29219dd400f2Bf60E5a23d13Be72B486D4038894', 6, 'usd-coin'), t('USDT', '0x6047828dc181963ba44974801FF68e538dA5eaF9', 6, 'tether')] },
     { key: 'ftm', name: 'Fantom', rpcs: ['https://fantom.drpc.org'], symbol: 'FTM', price: 'fantom', explorer: 'https://ftmscan.com/address/',
@@ -53,14 +57,118 @@
     { key: 'bera', name: 'Berachain', rpcs: ['https://berachain-rpc.publicnode.com', 'https://rpc.berachain.com'], symbol: 'BERA', price: 'berachain-bera', explorer: 'https://berascan.com/address/',
       tokens: [t('USDC.e', '0x549943e04f40284185054145c6E4e9568C1D3241', 6, 'usd-coin')] },
     { key: 'uni', name: 'Unichain', rpcs: ['https://unichain-rpc.publicnode.com', 'https://mainnet.unichain.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://uniscan.xyz/address/',
-      tokens: [t('USDC', '0x078D782b760474a361dDA0AF3839290b0EF57AD6', 6, 'usd-coin')] },
+      tokens: [t('USDC', '0x078D782b760474a361dDA0AF3839290b0EF57AD6', 6, 'usd-coin'), t('USDT0', '0x9151434b16b9763660705744891fA906F660EcC5', 6, 'usdt0')] },
     { key: 'zkevm', name: 'Polygon zkEVM', rpcs: ['https://zkevm-rpc.com', 'https://polygon-zkevm.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://zkevm.polygonscan.com/address/',
       tokens: [t('USDC', '0xA8CE8aee21bC2A48a5EF670afCc9274C7bbbC035', 6, 'usd-coin'), t('USDT', '0x1E4a5963aBFD975d8c9021ce480b42188849D41d', 6, 'tether')] },
     { key: 'world', name: 'World Chain', rpcs: ['https://worldchain-mainnet.g.alchemy.com/public', 'https://worldchain.drpc.org'], symbol: 'ETH', price: 'ethereum', explorer: 'https://worldscan.org/address/',
       tokens: [t('USDC', '0x79A02482A880bCE3F13e09Da970dC34db4CD24d1', 6, 'usd-coin')] },
     { key: 'hyperevm', name: 'HyperEVM', rpcs: ['https://rpc.hyperliquid.xyz/evm', 'https://hyperliquid-rpc.publicnode.com'], symbol: 'HYPE', price: 'hyperliquid', explorer: 'https://hyperevmscan.io/address/',
       tokens: [t('USDT0', '0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb', 6, 'usdt0')] },
+    // ---- added 2026-10-24: every EVM network since 2015 with a browser-reachable public RPC ----
+    // Ethereum forks: anything on the ETH address before the fork exists here too.
+    ev('etc', 'Ethereum Classic (2016 fork)', ['https://etc.drpc.org', 'https://etc.etcdesktop.com'], 'ETC', 'ethereum-classic', 'https://etc.blockscout.com/address/'),
+    ev('ethw', 'EthereumPoW (2022 fork)', ['https://mainnet.ethereumpow.org'], 'ETHW', 'ethereum-pow-iou', 'https://www.oklink.com/ethw/address/'),
+    ev('pls', 'PulseChain (2023 fork)', ['https://pulsechain-rpc.publicnode.com', 'https://rpc.pulsechain.com', 'https://rpc-pulsechain.g4mm4.io'], 'PLS', 'pulsechain', 'https://otter.pulsechain.com/address/'),
+    ev('nova', 'Arbitrum Nova', ['https://arbitrum-nova-rpc.publicnode.com', 'https://nova.arbitrum.io/rpc', 'https://arbitrum-nova.drpc.org'], 'ETH', 'ethereum', 'https://nova.arbiscan.io/address/',
+      [t('USDC', '0x750ba8b76187092B0D1E87E28daaf484d1b5273b', 6, 'usd-coin')]),
+    ev('one', 'Harmony', ['https://api.harmony.one', 'https://harmony-0.drpc.org', 'https://api.s0.t.hmny.io'], 'ONE', 'harmony', 'https://explorer.harmony.one/address/'),
+    ev('aurora', 'Aurora', ['https://mainnet.aurora.dev', 'https://aurora.drpc.org'], 'ETH', 'ethereum', 'https://explorer.aurora.dev/address/',
+      [t('USDC', '0x368EBb46ACa6b8D0787C96B2b20bD3CC3F2c45F7', 6, 'usd-coin'), t('USDC.e', '0xB12BFcA5A55806AaF64E99521918A4bf0fC40802', 6, 'usd-coin'), t('USDT.e', '0x4988a896b1227218e4A686fdE5EabdcAbd91571f', 6, 'tether')]),
+    ev('kavaevm', 'Kava EVM', ['https://kava-evm-rpc.publicnode.com', 'https://evm.kava.io', 'https://kava.drpc.org'], 'KAVA', 'kava', 'https://kavascan.com/address/',
+      [t('USDT', '0x919C1c267BC06a7039e03fcc2eF738525769109c', 6, 'tether'), t('USDC', '0xfA9343C3897324496A05fC75abeD6bAC29f8A40f', 6, 'usd-coin')]),
+    ev('kaia', 'Kaia (Klaytn)', ['https://public-en.node.kaia.io'], 'KAIA', 'kaia', 'https://kaiascan.io/address/',
+      [t('USDT', '0xd077a400968890eacc75cdc901f0356c943e4fdb', 6, 'tether'), t('USDC', '0x608792Deb376CCE1c9FA4D0E6B7b44f507CfFa6A', 6, 'usd-coin')]),
+    ev('metis', 'Metis', ['https://metis-rpc.publicnode.com', 'https://andromeda.metis.io/?owner=1088', 'https://metis.drpc.org'], 'METIS', 'metis-token', 'https://andromeda-explorer.metis.io/address/',
+      [t('m.USDC', '0xEA32A96608495e54156Ae48931A7c20f0dcc1a21', 6, 'usd-coin'), t('m.USDT', '0xbB06DCA3AE6887fAbF931640f67cab3e3a16F4dC', 6, 'tether')]),
+    ev('boba', 'Boba', ['https://mainnet.boba.network', 'https://boba-eth.drpc.org'], 'ETH', 'ethereum', 'https://bobascan.com/address/'),
+    ev('movr', 'Moonriver', ['https://moonriver.drpc.org'], 'MOVR', 'moonriver', 'https://moonriver.moonscan.io/address/'),
+    ev('glmr', 'Moonbeam', ['https://moonbeam.drpc.org', 'https://1rpc.io/glmr', 'https://moonbeam.api.onfinality.io/public'], 'GLMR', 'moonbeam', 'https://moonscan.io/address/',
+      [t('USDC', '0x931715FEE2d06333043d11F658C8CE934aC61D0c', 6, 'usd-coin'), t('xcUSDT', '0xFFFFFFfFea09FB06d082fd1275CD48b191cbCD1d', 6, 'tether'), t('xcUSDC', '0xFFfffffF7D2B0B761Af01Ca8e25242976ac0aD7D', 6, 'usd-coin')]),
+    ev('astr', 'Astar', ['https://evm.astar.network', 'https://astar.drpc.org'], 'ASTR', 'astar', 'https://astar.blockscout.com/address/',
+      [t('USDC', '0x6a2d262D56735DbA19Dd70682B39F6bE9a931D98', 6, 'usd-coin'), t('USDT', '0x3795C36e7D12A8c252A20C5a7B455f7c57b60283', 6, 'tether')]),
+    ev('tlos', 'Telos EVM', ['https://rpc.telos.net', 'https://telos.drpc.org'], 'TLOS', 'telos', 'https://teloscan.io/address/',
+      [t('USDC.e', '0xF1815bd50389c46847f0Bda824eC8da914045D14', 6, 'usd-coin'), t('USDT', '0x674843C06FF83502ddb4D37c2E09C01cdA38cbc8', 6, 'tether')]),
+    ev('iotx', 'IoTeX', ['https://babel-api.mainnet.iotex.io', 'https://iotex-network.rpc.thirdweb.com'], 'IOTX', 'iotex', 'https://iotexscan.io/address/',
+      [t('ioUSDC', '0x3B2bf2b523f54C4E454F08Aa286D03115aFF326c', 6, 'usd-coin'), t('ioUSDT', '0x6fbCdc1169B5130C59E72E51Ed68A84841C98cd1', 6, 'tether')]),
+    ev('sapphire', 'Oasis Sapphire', ['https://sapphire.oasis.io'], 'ROSE', 'oasis-network', 'https://explorer.oasis.io/mainnet/sapphire/address/'),
+    ev('emerald', 'Oasis Emerald', ['https://emerald.oasis.io', 'https://emerald.oasis.dev'], 'ROSE', 'oasis-network', 'https://explorer.oasis.io/mainnet/emerald/address/'),
+    ev('core', 'Core', ['https://rpc.coredao.org', 'https://core.drpc.org'], 'CORE', 'coredaoorg', 'https://scan.coredao.org/address/',
+      [t('USDT', '0x900101d06A7426441Ae63e9AB3B9b0F63Be145F1', 6, 'tether'), t('USDC', '0xa4151B2B3e269645181dCcF2D426cE75fcbDeca9', 6, 'usd-coin')]),
+    ev('cfx', 'Conflux eSpace', ['https://evm.confluxrpc.com'], 'CFX', 'conflux-token', 'https://evm.confluxscan.org/address/',
+      [t('USDT', '0xfe97E85d13ABD9c1c33384E796F10B73905637cE', 18, 'tether'), t('USDC', '0x6963EfED0aB40F6C3d7BdA44A05dcf1437C44372', 18, 'usd-coin')]),
+    ev('manta', 'Manta Pacific', ['https://pacific-rpc.manta.network/http', 'https://manta-pacific.drpc.org'], 'ETH', 'ethereum', 'https://pacific-explorer.manta.network/address/'),
+    ev('mode', 'Mode', ['https://mainnet.mode.network'], 'ETH', 'ethereum', 'https://explorer.mode.network/address/',
+      [t('USDC', '0xd988097fb8612cc24eeC14542bC03424c656005f', 6, 'usd-coin'), t('USDT', '0xf0F161fDA2712DB8b566946122a5af183995e2eD', 6, 'tether')]),
+    ev('taiko', 'Taiko', ['https://taiko-rpc.publicnode.com', 'https://rpc.mainnet.taiko.xyz', 'https://taiko.drpc.org'], 'ETH', 'ethereum', 'https://taikoscan.io/address/',
+      [t('USDC', '0x07d83526730c7438048D55A4fc0b850e2aaB6f0b', 6, 'usd-coin'), t('USDT', '0x2DEF195713CF4a606B49D07E520e22C17899a736', 6, 'tether')]),
+    ev('zora', 'Zora', ['https://rpc.zora.energy', 'https://zora.drpc.org'], 'ETH', 'ethereum', 'https://explorer.zora.energy/address/'),
+    ev('fraxtal', 'Fraxtal', ['https://fraxtal-rpc.publicnode.com', 'https://rpc.frax.com', 'https://fraxtal.drpc.org'], 'FRAX', 'frax-share', 'https://fraxscan.com/address/'),
+    ev('ron', 'Ronin', ['https://api.roninchain.com/rpc', 'https://ronin.drpc.org'], 'RON', 'ronin', 'https://app.roninchain.com/address/',
+      [t('USDC', '0x0B7007c13325C48911F73A2daD5FA5dCBf808aDc', 6, 'usd-coin')]),
+    ev('flr', 'Flare', ['https://flare-api.flare.network/ext/C/rpc', 'https://flare.drpc.org', 'https://flare.rpc.thirdweb.com'], 'FLR', 'flare-networks', 'https://flare-explorer.flare.network/address/',
+      [t('USDT0', '0xe7cd86e13AC4309349F30B3435a9d337750fC82D', 6, 'usdt0'), t('USDC.e', '0xFbDa5F676cB37624f28265A144A48B0d6e87d3b6', 6, 'usd-coin')]),
+    ev('sgb', 'Songbird', ['https://songbird-api.flare.network/ext/C/rpc'], 'SGB', 'songbird', 'https://songbird-explorer.flare.network/address/'),
+    ev('rbtc', 'Rootstock', ['https://public-node.rsk.co', 'https://mycrypto.rsk.co'], 'RBTC', 'rootstock', 'https://explorer.rootstock.io/address/',
+      [t('USDT0', '0x779Ded0c9e1022225f8E0630b35a9b54bE713736', 6, 'usdt0'), t('rUSDT', '0xef213441a85df4d7acbdae0cf78004e1e486bb96', 18, 'tether')]),
+    ev('merlin', 'Merlin', ['https://rpc.merlinchain.io', 'https://merlin.drpc.org'], 'BTC', 'bitcoin', 'https://scan.merlinchain.io/address/'),
+    ev('bitlayer', 'Bitlayer', ['https://rpc.bitlayer.org'], 'BTC', 'bitcoin', 'https://www.btrscan.com/address/'),
+    ev('bob', 'BOB', ['https://rpc.gobob.xyz', 'https://bob.drpc.org'], 'ETH', 'ethereum', 'https://explorer.gobob.xyz/address/',
+      [t('USDC.e', '0xe75D0fB2C24A55cA1e3F96781a2bCC7bdba058F0', 6, 'usd-coin'), t('USDT', '0x05D032ac25d322df992303dCa074EE7392C117b9', 6, 'tether')]),
+    ev('abs', 'Abstract', ['https://api.mainnet.abs.xyz', 'https://abstract.drpc.org'], 'ETH', 'ethereum', 'https://abscan.org/address/',
+      [t('USDC.e', '0x84A71ccD554Cc1b02749b35d22F684CC8ec987e1', 6, 'usd-coin'), t('USDT', '0x0709F39376dEEe2A2dfC94A58EdEb2Eb9DF012bD', 6, 'tether')]),
+    ev('ink', 'Ink', ['https://rpc-gel.inkonchain.com', 'https://rpc-qnd.inkonchain.com', 'https://ink.drpc.org'], 'ETH', 'ethereum', 'https://explorer.inkonchain.com/address/',
+      [t('USDC.e', '0xF1815bd50389c46847f0Bda824eC8da914045D14', 6, 'usd-coin'), t('USDT0', '0x0200C29006150606B650577BBE7B6248F58470c1', 6, 'usdt0')]),
+    ev('soneium', 'Soneium', ['https://rpc.soneium.org', 'https://soneium.drpc.org'], 'ETH', 'ethereum', 'https://soneium.blockscout.com/address/',
+      [t('USDC.e', '0xbA9986D2381edf1DA03B0B9c1f8b00dc4AacC369', 6, 'usd-coin'), t('USDT', '0x3A337a6adA9d885b6Ad95ec48F9b75f197b5AE35', 6, 'tether')]),
+    ev('lisk', 'Lisk', ['https://rpc.api.lisk.com', 'https://lisk.drpc.org'], 'ETH', 'ethereum', 'https://blockscout.lisk.com/address/',
+      [t('USDT', '0x05D032ac25d322df992303dCa074EE7392C117b9', 6, 'tether'), t('USDC.e', '0xF242275d3a6527d877f2c927a82D9b057609cc71', 6, 'usd-coin')]),
+    ev('seievm', 'Sei EVM', ['https://sei-evm-rpc.publicnode.com', 'https://evm-rpc.sei-apis.com'], 'SEI', 'sei-network', 'https://seitrace.com/address/',
+      [t('USDC', '0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392', 6, 'usd-coin'), t('USDT0', '0x9151434b16b9763660705744891fA906F660EcC5', 6, 'usdt0'), t('USDC.n', '0x3894085Ef7Ff0f0aeDf52E2A2704928d1Ec074F1', 6, 'usd-coin')]),
+    ev('ape', 'ApeChain', ['https://rpc.apechain.com', 'https://apechain.drpc.org'], 'APE', 'apecoin', 'https://apescan.io/address/'),
+    ev('story', 'Story', ['https://mainnet.storyrpc.io'], 'IP', 'story-2', 'https://www.storyscan.io/address/',
+      [t('USDC.e', '0xF1815bd50389c46847f0Bda824eC8da914045D14', 6, 'usd-coin')]),
+    ev('chz', 'Chiliz', ['https://chiliz-rpc.publicnode.com', 'https://rpc.chiliz.com'], 'CHZ', 'chiliz', 'https://chiliscan.com/address/'),
+    ev('zircuit', 'Zircuit', ['https://mainnet.zircuit.com'], 'ETH', 'ethereum', 'https://explorer.zircuit.com/address/',
+      [t('USDC.e', '0x3b952c8C9C44e8Fe201e2b26F6B2200203214cfF', 6, 'usd-coin'), t('USDT', '0x46dDa6a5a559d861c06EC9a95Fb395f5C3Db0742', 6, 'tether')]),
+    ev('gravity', 'Gravity', ['https://rpc.gravity.xyz'], 'G', 'g-token', 'https://explorer.gravity.xyz/address/',
+      [t('USDC.e', '0xFbDa5F676cB37624f28265A144A48B0d6e87d3b6', 6, 'usd-coin'), t('USDT', '0x816E810f9F787d669FB71932DeabF6c83781Cd48', 6, 'tether')]),
+    ev('morph', 'Morph', ['https://rpc.morphl2.io', 'https://rpc-quicknode.morphl2.io'], 'ETH', 'ethereum', 'https://explorer.morphl2.io/address/',
+      [t('USDC', '0xe34c91815d7fc18A9e2148bcD4241d0a5848b693', 6, 'usd-coin'), t('USDT', '0xc7D67A9cBB121b3b0b9c053DD9f469523243379A', 6, 'tether')]),
+    ev('lens', 'Lens', ['https://rpc.lens.xyz', 'https://api.lens.matterhosted.dev'], 'GHO', 'gho', 'https://explorer.lens.xyz/address/'),
+    ev('plume', 'Plume', ['https://rpc.plume.org'], 'PLUME', 'plume', 'https://explorer.plume.org/address/',
+      [t('USDC.e', '0x78adD880A697070c1e765Ac44D65323a0DcCE913', 6, 'usd-coin')]),
+    ev('hemi', 'Hemi', ['https://rpc.hemi.network/rpc', 'https://hemi.drpc.org'], 'ETH', 'ethereum', 'https://explorer.hemi.xyz/address/',
+      [t('USDC.e', '0xad11a8BEb98bbf61dbb1aa0F6d6F2ECD87b35afA', 6, 'usd-coin'), t('USDT', '0xbB0D083fb1be0A9f6157ec484b6C79E0A4e31C2e', 6, 'tether')]),
+    ev('monad', 'Monad', ['https://rpc.monad.xyz', 'https://monad-mainnet.drpc.org', 'https://rpc1.monad.xyz'], 'MON', 'monad', 'https://monadscan.com/address/',
+      [t('USDC', '0x754704Bc059F8C67012fEd69BC8A327a5aafb603', 6, 'usd-coin'), t('USDT0', '0xe7cd86e13AC4309349F30B3435a9d337750fC82D', 6, 'usdt0')]),
+    ev('katana', 'Katana', ['https://rpc.katana.network', 'https://katana.drpc.org'], 'ETH', 'ethereum', 'https://katanascan.com/address/',
+      [t('vbUSDC', '0x203A662b0BD271A6ed5a60EdFbd04bFce608FD36', 6, 'usd-coin'), t('vbUSDT', '0x2DCa96907fde857dd3D816880A0df407eeB2D2F2', 6, 'tether')]),
+    ev('etherlink', 'Etherlink', ['https://node.mainnet.etherlink.com', 'https://etherlink.drpc.org'], 'XTZ', 'tezos', 'https://explorer.etherlink.com/address/',
+      [t('USDC', '0x796Ea11Fa2dD751eD01b53C372fFDB4AAa8f00F9', 6, 'usd-coin'), t('USDT', '0x2C03058C8AFC06713be23e58D2febC8337dbfE6A', 6, 'tether')]),
+    ev('shape', 'Shape', ['https://mainnet.shape.network', 'https://shape-mainnet.g.alchemy.com/public'], 'ETH', 'ethereum', 'https://shapescan.xyz/address/'),
+    ev('xlayer', 'X Layer', ['https://xlayer.drpc.org', 'https://rpc.xlayer.tech', 'https://xlayerrpc.okx.com'], 'OKB', 'okb', 'https://www.oklink.com/xlayer/address/',
+      [t('USDT', '0x1E4a5963aBFD975d8c9021ce480b42188849D41d', 6, 'tether'), t('USDC', '0x74b7F16337b8972027F6196A17a631aC6dE26d22', 6, 'usd-coin')]),
+    ev('fuse', 'Fuse', ['https://rpc.fuse.io', 'https://fuse.drpc.org'], 'FUSE', 'fuse-network-token', 'https://explorer.fuse.io/address/',
+      [t('USDC', '0x28C3d1cD466Ba22f6cae51b1a4692a831696391A', 6, 'usd-coin'), t('USDT', '0x68c9736781E9316ebf5c3d49FE0C1f45D2D104Cd', 6, 'tether')]),
+    ev('fil', 'Filecoin EVM', ['https://api.node.glif.io/rpc/v1', 'https://filecoin.drpc.org'], 'FIL', 'filecoin', 'https://filfox.info/en/address/'),
+    ev('sys', 'Syscoin NEVM', ['https://rpc.syscoin.org', 'https://syscoin-evm.publicnode.com'], 'SYS', 'syscoin', 'https://explorer.syscoin.org/address/'),
+    ev('kcc', 'KCC', ['https://rpc-mainnet.kcc.network', 'https://kcc-rpc.com'], 'KCS', 'kucoin-shares', 'https://scan.kcc.io/address/'),
+    ev('theta', 'Theta', ['https://eth-rpc-api.thetatoken.org/rpc'], 'TFUEL', 'theta-fuel', 'https://explorer.thetatoken.org/account/'),
+    ev('sophon', 'Sophon', ['https://rpc.sophon.xyz'], 'SOPH', 'sophon', 'https://sophscan.xyz/address/'),
+    ev('plasma', 'Plasma', ['https://rpc.plasma.to', 'https://plasma.drpc.org'], 'XPL', 'plasma', 'https://plasmascan.to/address/',
+      [t('USDT0', '0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb', 6, 'usdt0')]),
+    ev('cyber', 'Cyber', ['https://rpc.cyber.co', 'https://cyber.alt.technology'], 'ETH', 'ethereum', 'https://cyberscan.co/address/'),
+    ev('vana', 'Vana', ['https://rpc.vana.org'], 'VANA', 'vana', 'https://vanascan.io/address/'),
+    ev('imx', 'Immutable zkEVM', ['https://rpc.immutable.com'], 'IMX', 'immutable-x', 'https://explorer.immutable.com/address/',
+      [t('USDC', '0x6de8aCC0D406837030CE4dd28e7c08C5a96a30d2', 6, 'usd-coin'), t('USDT', '0x68bcc7F1190AF20e7b572BCFb431c3Ac10A936Ab', 6, 'tether')]),
+    ev('vic', 'Viction (TomoChain)', ['https://rpc.viction.xyz', 'https://viction.drpc.org'], 'VIC', 'tomochain', 'https://vicscan.xyz/address/',
+      [t('USDT', '0x381B31409e4D220919B2cFF012ED94d70135A59e', 6, 'tether')]),
+    ev('vlx', 'Velas', ['https://evmexplorer.velas.com/rpc', 'https://mainnet.velas.com/rpc'], 'VLX', 'velas', 'https://evmexplorer.velas.com/address/'),
+    ev('wan', 'Wanchain', ['https://gwan-ssl.wandevs.org:56891'], 'WAN', 'wanchain', 'https://www.wanscan.org/address/'),
+    ev('nrg', 'Energi', ['https://nodeapi.energi.network'], 'NRG', 'energi', 'https://explorer.energi.network/address/'),
+    ev('okt', 'OKT Chain', ['https://exchainrpc.okex.org'], 'OKT', 'oec-token', 'https://www.oklink.com/oktc/address/'),
   ];
+  function ev(key, name, rpcs, symbol, price, explorer, tokens) { return { key, name, rpcs, symbol, price, explorer, tokens: tokens || [] }; }
   function t(symbol, addr, dec, price) { return { symbol, addr, dec, price }; }
 
   // Cosmos chains on the m/44'/118' key. stables: denoms that count like a stablecoin,
@@ -68,16 +176,16 @@
   // was resolved through the chain's own denom trace endpoint.
   const USDC = ['USDC', 6, 'usd-coin'], AXLUSDC = ['axlUSDC', 6, 'usd-coin'];
   const COSMOS = [
-    { key: 'atom', name: 'Cosmos Hub', rest: 'https://rest.cosmos.directory/cosmoshub', denom: 'uatom', dec: 6, symbol: 'ATOM', price: 'cosmos', explorer: 'https://www.mintscan.io/cosmos/address/',
+    { key: 'atom', name: 'Cosmos Hub', rest: 'https://rest.cosmos.directory/cosmoshub', rest2: 'https://cosmos-rest.publicnode.com', denom: 'uatom', dec: 6, symbol: 'ATOM', price: 'cosmos', explorer: 'https://www.mintscan.io/cosmos/address/',
       stables: { 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013': USDC } },
-    { key: 'osmo', name: 'Osmosis', rest: 'https://rest.cosmos.directory/osmosis', denom: 'uosmo', dec: 6, symbol: 'OSMO', price: 'osmosis', explorer: 'https://www.mintscan.io/osmosis/address/',
+    { key: 'osmo', name: 'Osmosis', rest: 'https://rest.cosmos.directory/osmosis', rest2: 'https://osmosis-rest.publicnode.com', denom: 'uosmo', dec: 6, symbol: 'OSMO', price: 'osmosis', explorer: 'https://www.mintscan.io/osmosis/address/',
       stables: { 'ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4': USDC, 'ibc/D189335C6E4A68B513C10AB227BF1C1D38C746766278BA3EEB4FB14124F1D858': AXLUSDC } },
-    { key: 'tia', name: 'Celestia', rest: 'https://rest.cosmos.directory/celestia', denom: 'utia', dec: 6, symbol: 'TIA', price: 'celestia', explorer: 'https://www.mintscan.io/celestia/address/' },
-    { key: 'dydx', name: 'dYdX', rest: 'https://rest.cosmos.directory/dydx', denom: 'adydx', dec: 18, symbol: 'DYDX', price: 'dydx-chain', explorer: 'https://www.mintscan.io/dydx/address/',
+    { key: 'tia', name: 'Celestia', rest: 'https://rest.cosmos.directory/celestia', rest2: 'https://celestia-rest.publicnode.com', denom: 'utia', dec: 6, symbol: 'TIA', price: 'celestia', explorer: 'https://www.mintscan.io/celestia/address/' },
+    { key: 'dydx', name: 'dYdX', rest: 'https://rest.cosmos.directory/dydx', rest2: 'https://dydx-rest.publicnode.com', denom: 'adydx', dec: 18, symbol: 'DYDX', price: 'dydx-chain', explorer: 'https://www.mintscan.io/dydx/address/',
       stables: { 'ibc/8E27BA2D5493AF5636760E354E46004562C46AB7EC0CC4C1CA14E9E20E2545B5': USDC } },
-    { key: 'sei', name: 'Sei', rest: 'https://rest.cosmos.directory/sei', denom: 'usei', dec: 6, symbol: 'SEI', price: 'sei-network', explorer: 'https://www.mintscan.io/sei/address/' },
-    { key: 'akt', name: 'Akash', rest: 'https://rest.cosmos.directory/akash', denom: 'uakt', dec: 6, symbol: 'AKT', price: 'akash-network', explorer: 'https://www.mintscan.io/akash/address/' },
-    { key: 'juno', name: 'Juno', rest: 'https://rest.cosmos.directory/juno', denom: 'ujuno', dec: 6, symbol: 'JUNO', price: 'juno-network', explorer: 'https://www.mintscan.io/juno/address/' },
+    { key: 'sei', name: 'Sei', rest: 'https://rest.cosmos.directory/sei', rest2: 'https://sei-rest.publicnode.com', denom: 'usei', dec: 6, symbol: 'SEI', price: 'sei-network', explorer: 'https://www.mintscan.io/sei/address/' },
+    { key: 'akt', name: 'Akash', rest: 'https://rest.cosmos.directory/akash', rest2: 'https://akash-rest.publicnode.com', denom: 'uakt', dec: 6, symbol: 'AKT', price: 'akash-network', explorer: 'https://www.mintscan.io/akash/address/' },
+    { key: 'juno', name: 'Juno', rest: 'https://rest.cosmos.directory/juno', rest2: 'https://juno-rest.publicnode.com', denom: 'ujuno', dec: 6, symbol: 'JUNO', price: 'juno-network', explorer: 'https://www.mintscan.io/juno/address/' },
     // No Stargaze REST endpoint sends CORS headers (checked every one in the chain registry), so a browser cannot ask.
     { key: 'stars', name: 'Stargaze', rest: 'https://rest.stargaze-apis.com', denom: 'ustars', dec: 6, symbol: 'STARS', price: 'stargaze', explorer: 'https://www.mintscan.io/stargaze/address/', unavailable: 'No Stargaze server lets a browser ask; tap the explorer link instead' },
     { key: 'noble', name: 'Noble', rest: 'https://rest.cosmos.directory/noble', denom: 'uusdc', dec: 6, symbol: 'USDC', price: 'usd-coin', explorer: 'https://www.mintscan.io/noble/address/' },
@@ -86,27 +194,111 @@
     { key: 'strd', name: 'Stride', rest: 'https://rest.cosmos.directory/stride', denom: 'ustrd', dec: 6, symbol: 'STRD', price: 'stride', explorer: 'https://www.mintscan.io/stride/address/' },
     { key: 'axl', name: 'Axelar', rest: 'https://rest.cosmos.directory/axelar', denom: 'uaxl', dec: 6, symbol: 'AXL', price: 'axelar', explorer: 'https://www.mintscan.io/axelar/address/',
       stables: { uusdc: AXLUSDC } },
+    // ---- added 2026-10-24 from the chain registry: every ATOM-key (slip44 118) chain whose
+    // REST answers a browser and whose coin has a market price. dec = the display exponent.
+    cz('atone', 'AtomOne', 'atomone', 'uatone', 6, 'ATONE', 'atomone', 'https://ping.pub/atomone/account/', 'https://atomone-rest.publicnode.com'),
+    cz('bbn', 'Babylon', 'babylon', 'ubbn', 6, 'BABY', 'babylon', 'https://www.mintscan.io/babylon/address/', 'https://babylon-rest.publicnode.com'),
+    cz('cheqd', 'cheqd', 'cheqd', 'ncheq', 9, 'CHEQ', 'cheqd-network', 'https://explorer.cheqd.io/accounts/', 'https://cheqd-rest.publicnode.com'),
+    cz('huahua', 'Chihuahua', 'chihuahua', 'uhuahua', 6, 'HUAHUA', 'chihuahua-token', 'https://ping.pub/chihuahua/account/'),
+    cz('fet', 'Fetch.ai', 'fetchhub', 'afet', 18, 'FET', 'fetch-ai', 'https://www.mintscan.io/fetchai/address/'),
+    cz('grav', 'Gravity Bridge', 'gravitybridge', 'ugraviton', 6, 'GRAV', 'graviton', 'https://www.mintscan.io/gravity-bridge/address/'),
+    cz('jkl', 'Jackal', 'jackal', 'ujkl', 6, 'JKL', 'jackal-protocol', 'https://ping.pub/jackal/account/'),
+    cz('kyve', 'KYVE', 'kyve', 'ukyve', 6, 'KYVE', 'kyve-network', 'https://www.mintscan.io/kyve/address/'),
+    cz('nibi', 'Nibiru', 'nibiru', 'unibi', 6, 'NIBI', 'nibiru', 'https://ping.pub/nibiru/account/'),
+    cz('nls', 'Nolus', 'nolus', 'unls', 6, 'NLS', 'nolus', 'https://ping.pub/nolus/account/'),
+    cz('orai', 'Oraichain', 'oraichain', 'orai', 6, 'ORAI', 'oraichain-token', 'https://scan.orai.io/account/', 'https://oraichain-rest.publicnode.com'),
+    cz('pasg', 'Passage', 'passage', 'upasg', 6, 'PASG', 'passage', 'https://www.mintscan.io/passage/address/'),
+    cz('xprt', 'Persistence', 'persistence', 'uxprt', 6, 'XPRT', 'persistence', 'https://www.mintscan.io/persistence/address/'),
+    cz('regen', 'Regen', 'regen', 'uregen', 6, 'REGEN', 'regen', 'https://ping.pub/regen/account/'),
+    cz('saga', 'Saga', 'saga', 'usaga', 6, 'SAGA', 'saga-2', 'https://www.mintscan.io/saga/address/', 'https://saga-rest.publicnode.com'),
+    cz('seda', 'SEDA', 'seda', 'aseda', 18, 'SEDA', 'seda-2', 'https://explorer.seda.xyz/account/'),
+    cz('dvpn', 'Sentinel', 'sentinel', 'udvpn', 6, 'P2P', 'sentinel', 'https://explorer.sentinel.co/accounts/', 'https://sentinel-rest.publicnode.com'),
+    cz('ctk', 'Shentu', 'shentu', 'uctk', 6, 'CTK', 'certik', 'https://ping.pub/shentu/account/'),
+    cz('somm', 'Sommelier', 'sommelier', 'usomm', 6, 'SOMM', 'sommelier', 'https://www.mintscan.io/sommelier/address/'),
+    cz('union', 'Union', 'union', 'au', 18, 'U', 'union-2', 'https://explorer.union.build/union/account/'),
+    cz('ward', 'Warden', 'wardenprotocol', 'award', 18, 'WARD', 'warden-2', 'https://explorer.wardenprotocol.org/address/'),
+    cz('xion', 'XION', 'xion', 'uxion', 6, 'XION', 'xion-2', 'https://www.mintscan.io/xion/address/'),
+    cz('arch', 'Archway', 'archway', 'aarch', 18, 'ARCH', 'archway', 'https://ping.pub/archway/account/'),
+    cz('aura', 'Aura', 'aura', 'uaura', 6, 'AURA', 'aura-network', 'https://aurascan.io/address/'),
+    cz('lore', 'Gitopia', 'gitopia', 'ulore', 6, 'LORE', 'gitopia', 'https://ping.pub/gitopia/account/'),
+    cz('pokt', 'Pocket Network', 'pocket', 'upokt', 6, 'POKT', 'pocket-network', 'https://shannon.pokt.network/poktroll/account/'),
+    // ETH-key (slip44 60) Cosmos chains: the same 20-byte hash as the EVM address, their own prefix.
+    cz('dym', 'Dymension', 'dymension', 'adym', 18, 'DYM', 'dymension', 'https://www.mintscan.io/dymension/address/', null, true),
+    cz('islm', 'HAQQ', 'haqq', 'aISLM', 18, 'ISLM', 'islamic-coin', 'https://ping.pub/haqq/account/', 'https://haqq-rest.publicnode.com', true),
+    cz('xpla', 'XPLA', 'xpla', 'axpla', 18, 'XPLA', 'xpla', 'https://ping.pub/xpla/account/', 'https://xpla-rest.publicnode.com', true),
+    cz('zeta', 'ZetaChain', 'zetachain', 'azeta', 18, 'ZETA', 'zetachain', 'https://ping.pub/zetachain/account/', null, true),
+    cz('om', 'MANTRA', 'mantrachain', 'amantra', 18, 'MANTRA', 'mantra', 'https://www.mintscan.io/mantra/address/', null, true),
+    cz('aioz', 'AIOZ Network', 'aioz', 'attoaioz', 18, 'AIOZ', 'aioz-network', 'https://explorer.aioz.network/address/', null, true),
+    cz('heart', 'Humans.ai', 'humans', 'aheart', 18, 'HEART', 'humans-ai', 'https://ping.pub/humans/account/', null, true),
+    cz('rio', 'Realio', 'realio', 'ario', 18, 'RIO', 'realio-network', 'https://ping.pub/realio/account/', null, true),
+    cz('shido', 'Shido', 'shido', 'shido', 18, 'SHIDO', 'shido-2', 'https://shidoscan.com/address/', null, true),
   ];
+  function cz(key, name, chain, denom, dec, symbol, price, explorer, rest2, eth) {
+    return { key, name, rest: 'https://rest.cosmos.directory/' + chain, rest2: rest2 || null, denom, dec, symbol, price, explorer, eth: !!eth };
+  }
   const INJ = { name: 'Injective', rest: 'https://rest.cosmos.directory/injective', denom: 'inj', dec: 18, symbol: 'INJ', price: 'injective-protocol', explorer: 'https://www.mintscan.io/injective/address/',
     stables: { 'ibc/2CBC2EA121AE42563B08028466F37B600F2D7D4282342DE938283CC3FB2BC00E': USDC } };
 
-  const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://solana.leorpc.com/?api_key=FREE']   // mainnet-beta refuses browser origins (403);
+  // api.mainnet-beta.solana.com refuses browser origins (403), so it is not on this list.
+  const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://solana.leorpc.com/?api_key=FREE', 'https://rpc.solanatracker.io/public', 'https://public.rpc.solanavibestation.com'];
   const SOL_STABLES = [['USDC', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'usd-coin'], ['USDT', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', 'tether']];
   const TRX_STABLES = { TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t: ['USDT', 'tether', 6], TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8: ['USDC', 'usd-coin', 6] };
+  // Fallbacks for the single-source chains (each checked for browser CORS).
+  const BTC_APIS = ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'];
+  const XRP_RPCS = ['https://xrplcluster.com/', 'https://xrpl.ws/'];
+  const APT_APIS = ['https://fullnode.mainnet.aptoslabs.com/v1', 'https://api.mainnet.aptoslabs.com/v1', 'https://aptos-rest.publicnode.com/v1'];
+  const XAH_RPCS = ['https://xahau.network', 'https://xahau.org'];
+  const ECLIPSE_RPC = 'https://mainnetbeta-rpc.eclipse.xyz';
+  const MOVE_API = 'https://mainnet.movementnetwork.xyz/v1';
   // Hyperliquid's own ledger, same address as the EVM key. Spot coins that count.
   const HL_INFO = 'https://api.hyperliquid.xyz/info';
   const HL_COINS = { USDC: 'usd-coin', HYPE: 'hyperliquid', USDT0: 'usdt0', USDH: 'usdh-2' };   // usdh-2 is Native Markets' USDH on Hyperliquid
 
   // ---------------- fetch helpers ----------------
-  async function fetchJSON(url, opts, timeoutMs) {
-    const c = new AbortController();
-    const timer = setTimeout(() => c.abort(), timeoutMs || 15000);
-    try {
-      const r = await fetch(url, Object.assign({}, opts, { signal: c.signal }));
-      if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
-      return await r.json();
-    } finally { clearTimeout(timer); }
+  // A scan fires well over a hundred requests at once, and several go to the same host
+  // (rest.cosmos.directory serves every Cosmos chain). Public endpoints answer a burst
+  // like that with 429s, so each host gets at most HOST_LIMIT requests in flight, and a
+  // 429 or 5xx is retried twice with a short backoff before the next endpoint is tried.
+  // Each request has one deadline that also covers time spent waiting for a slot, so a
+  // hung host can't stack its timeouts wave after wave; the request fails on time and the
+  // network's fallback endpoint gets its turn.
+  const HOST_LIMIT = 6;
+  const hostSlots = new Map();
+  function timeoutError() { return new Error('timed out'); }
+  async function withHost(url, deadline, fn) {
+    const host = new URL(url).host;
+    const q = hostSlots.get(host) || { busy: 0, wait: [] };
+    hostSlots.set(host, q);
+    if (q.busy >= HOST_LIMIT) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { const i = q.wait.indexOf(go); if (i >= 0) q.wait.splice(i, 1); reject(timeoutError()); }, Math.max(0, deadline - Date.now()));
+        function go() { clearTimeout(timer); resolve(); }
+        q.wait.push(go);
+      });
+    }
+    q.busy++;
+    try { return await fn(); } finally { q.busy--; const next = q.wait.shift(); if (next) next(); }
   }
+  async function fetchOnce(url, opts, timeoutMs, as) {
+    const deadline = Date.now() + (timeoutMs || 15000);
+    for (let attempt = 0; ; attempt++) {
+      if (Date.now() >= deadline) throw timeoutError();
+      const res = await withHost(url, deadline, async () => {
+        const c = new AbortController();
+        const timer = setTimeout(() => c.abort(), Math.max(1, deadline - Date.now()));
+        try {
+          const r = await fetch(url, Object.assign({}, opts, { signal: c.signal }));
+          if (r.status === 429 || r.status >= 500) return { retry: r.status };
+          if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+          return { body: as === 'bytes' ? new Uint8Array(await r.arrayBuffer()) : as === 'text' ? await r.text() : await r.json() };
+        } finally { clearTimeout(timer); }
+      });
+      if (!res.retry) return res.body;
+      if (attempt >= 2 || Date.now() + 700 * (attempt + 1) >= deadline) { const e = new Error('HTTP ' + res.retry); e.status = res.retry; throw e; }
+      await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+    }
+  }
+  function fetchJSON(url, opts, timeoutMs) { return fetchOnce(url, opts, timeoutMs, 'json'); }
   async function rpc(url, method, params) {
     const j = await fetchJSON(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
     if (j.error) throw new Error(j.error.message || 'rpc error');
@@ -147,6 +339,71 @@
     const sats = BigInt(c.funded_txo_sum) - BigInt(c.spent_txo_sum) + BigInt(m.funded_txo_sum) - BigInt(m.spent_txo_sum);
     return { holdings: [h(symbol, units(sats, 8), price)], others: 0, partial: null };
   }
+  async function checkBtc(addr) {
+    return firstOk(BTC_APIS, (b) => checkMempoolStyle(b, addr, 'BTC', 'bitcoin'));
+  }
+  async function checkLtc(addr) {
+    return firstOk(['mempool', 'blockcypher'], async (src) => {
+      if (src === 'mempool') return checkMempoolStyle('https://litecoinspace.org/api/address/', addr, 'LTC', 'litecoin');
+      const j = await fetchJSON('https://api.blockcypher.com/v1/ltc/main/addrs/' + addr + '/balance');
+      return { holdings: [h('LTC', units(BigInt(j.final_balance), 8), 'litecoin')], others: 0, partial: null };
+    });
+  }
+  // Bitcoin forks. Coins that sat on the legacy (1...) Bitcoin address before a fork exist at
+  // the same key on the forked chain, so each is read at that address.
+  async function checkBch(legacy) {   // Haskoin accepts the legacy form for BCH
+    const j = await fetchJSON('https://api.haskoin.com/bch/address/' + legacy + '/balance');
+    return { holdings: [h('BCH', units(BigInt(j.confirmed) + BigInt(j.unconfirmed), 8), 'bitcoin-cash')], others: 0, partial: null };
+  }
+  async function checkBsv(legacy) {
+    const j = await fetchJSON('https://api.whatsonchain.com/v1/bsv/main/address/' + legacy + '/balance');
+    return { holdings: [h('BSV', units(BigInt(j.confirmed) + BigInt(j.unconfirmed), 8), 'bitcoin-cash-sv')], others: 0, partial: null };
+  }
+  // eCash's only browser-reachable index (Chronik) answers in protobuf. ScriptUtxos is
+  // { 2: repeated ScriptUtxo }, and ScriptUtxo field 5 is the amount in sats (1 XEC = 100 sats).
+  function pbVarint(b, p) { let r = 0n, sh = 0n; for (;;) { const x = b[p++]; if (x === undefined) throw new Error('bad protobuf'); r |= BigInt(x & 0x7f) << sh; sh += 7n; if (!(x & 0x80)) return [r, p]; } }
+  function pbFields(b, s, e, cb) {
+    let p = s;
+    while (p < e) {
+      let k; [k, p] = pbVarint(b, p);
+      const f = Number(k >> 3n), w = Number(k & 7n);
+      if (w === 0) { let v; [v, p] = pbVarint(b, p); cb(f, w, v); }
+      else if (w === 2) { let l; [l, p] = pbVarint(b, p); cb(f, w, [p, p + Number(l)]); p += Number(l); }
+      else if (w === 1) p += 8; else if (w === 5) p += 4; else throw new Error('bad protobuf');
+    }
+  }
+  async function checkXec(legacy) {
+    const raw = window.SolanaATA.b58decode(legacy);            // version byte, 20-byte hash, checksum
+    const hash = D.bytesToHex(raw.slice(1, 21));
+    const b = await fetchOnce('https://chronik.e.cash/script/p2pkh/' + hash + '/utxos', undefined, 15000, 'bytes');
+    let sats = 0n;
+    pbFields(b, 0, b.length, (f, w, v) => { if (f === 2 && w === 2) pbFields(b, v[0], v[1], (f2, w2, v2) => { if (f2 === 5 && w2 === 0) sats += v2; }); });
+    return { holdings: [h('XEC', units(sats, 2), 'ecash')], others: 0, partial: null };
+  }
+  async function checkXahau(addr) {
+    return firstOk(XAH_RPCS, async (u) => {
+      const j = await fetchJSON(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'account_info', params: [{ account: addr, ledger_index: 'validated' }] }) });
+      const r = j.result || {};
+      if (r.error === 'actNotFound') return { holdings: [h('XAH', 0, 'xahau')], others: 0, partial: null };
+      if (r.error || r.status === 'error') throw new Error(r.error_message || r.error || 'xahau error');
+      return { holdings: [h('XAH', units(BigInt(r.account_data.Balance), 6), 'xahau')], others: 0, partial: null };
+    });
+  }
+  // Eclipse is an SVM chain on the Solana key; its native coin is ETH with 9 decimals.
+  async function checkEclipse(addr) {
+    const r = await rpc(ECLIPSE_RPC, 'getBalance', [addr]);
+    return { holdings: [h('ETH', units(BigInt(r.value), 9), 'ethereum')], others: 0, partial: null };
+  }
+  // Aptos-style coin balance (also Movement, which uses the Aptos key and REST API).
+  async function aptosBalance(base, addr) {
+    // An account that does not exist yet answers 200 with 0; any error is a real fault.
+    const t = await fetchOnce(base + '/accounts/' + addr + '/balance/0x1::aptos_coin::AptosCoin', undefined, 15000, 'text');
+    if (!/^\s*"?\d+"?\s*$/.test(t)) throw new Error('unexpected answer');
+    return BigInt(t.trim().replace(/"/g, ''));
+  }
+  async function checkMovement(addr) {
+    return { holdings: [h('MOVE', units(await aptosBalance(MOVE_API, addr), 8), 'movement')], others: 0, partial: null };
+  }
   async function checkDoge(addr) {
     const j = await fetchJSON('https://api.blockcypher.com/v1/doge/main/addrs/' + addr + '/balance');
     return { holdings: [h('DOGE', units(BigInt(j.final_balance), 8), 'dogecoin')], others: 0, partial: null };
@@ -165,7 +422,7 @@
         if (parsed && parsed.mint === mint && parsed.tokenAmount && parsed.tokenAmount.uiAmount > 0) holdings.push(h(symbol, parsed.tokenAmount.uiAmount, price));
       }
     } catch (e) { partial = 'stablecoins not checked'; }
-    return { holdings, others: 0, partial: partial || 'other SPL tokens not checked' };
+    return { holdings, others: 0, partial, note: 'other SPL tokens not checked' };
   }
   async function checkTrx(addr) {
     const j = await fetchJSON('https://api.trongrid.io/v1/accounts/' + addr);
@@ -180,7 +437,7 @@
     return { holdings, others, partial: null };
   }
   async function checkCosmos(c, addr) {
-    const j = await fetchJSON(c.rest + '/cosmos/bank/v1beta1/balances/' + addr + '?pagination.limit=200');
+    const j = await firstOk([c.rest, c.rest2].filter(Boolean), (base) => fetchJSON(base + '/cosmos/bank/v1beta1/balances/' + addr + '?pagination.limit=200'));
     let native = 0n, others = 0;
     const holdings = [];
     for (const b of j.balances || []) {
@@ -210,7 +467,7 @@
     return { holdings, others, partial: null };
   }
   async function checkXrp(addr) {
-    const j = await fetchJSON('https://xrplcluster.com/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'account_info', params: [{ account: addr, ledger_index: 'validated' }] }) });
+    const j = await firstOk(XRP_RPCS, (u) => fetchJSON(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'account_info', params: [{ account: addr, ledger_index: 'validated' }] }) }));
     const r = j.result || {};
     let drops = 0n;
     if (r.error === 'actNotFound') drops = 0n;
@@ -232,42 +489,87 @@
     return { holdings: [h('SUI', units(native, 9), 'sui')], others, partial: null };
   }
   async function checkApt(addr) {
-    const c = new AbortController();
-    const timer = setTimeout(() => c.abort(), 15000);
-    try {
-      const r = await fetch('https://fullnode.mainnet.aptoslabs.com/v1/accounts/' + addr + '/balance/0x1::aptos_coin::AptosCoin', { signal: c.signal });
-      let octas = 0n;
-      if (r.ok) octas = BigInt((await r.text()).trim().replace(/"/g, ''));
-      else if (r.status !== 404) throw new Error('HTTP ' + r.status);
-      return { holdings: [h('APT', units(octas, 8), 'aptos')], others: 0, partial: null };
-    } finally { clearTimeout(timer); }
+    const octas = await firstOk(APT_APIS, (base) => aptosBalance(base, addr));
+    return { holdings: [h('APT', units(octas, 8), 'aptos')], others: 0, partial: null };
+  }
+
+  // CashAddr (BCH and eCash address format) for the legacy Bitcoin address's hash.
+  function cashaddr(prefix, legacy) {
+    const CH = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const raw = window.SolanaATA.b58decode(legacy);
+    const payload = [0, ...raw.slice(1, 21)];                 // version 0 = P2PKH, 160-bit hash
+    const words = []; let acc = 0, bits = 0;
+    for (const b of payload) { acc = ((acc << 8) | b) & 0xffff; bits += 8; while (bits >= 5) { bits -= 5; words.push((acc >>> bits) & 31); } }
+    if (bits) words.push((acc << (5 - bits)) & 31);
+    const G = [0x98f2bc8e61n, 0x79b76d99e2n, 0xf33e5fb3c4n, 0xae2eabe2a8n, 0x1e4f43e470n];
+    let c = 1n;
+    for (const d of [...[...prefix].map((ch) => ch.charCodeAt(0) & 31), 0, ...words, 0, 0, 0, 0, 0, 0, 0, 0]) {
+      const c0 = c >> 35n; c = ((c & 0x07ffffffffn) << 5n) ^ BigInt(d);
+      for (let i = 0; i < 5; i++) if ((c0 >> BigInt(i)) & 1n) c ^= G[i];
+    }
+    c ^= 1n;
+    let out = prefix + ':';
+    for (const w of words) out += CH[w];
+    for (let i = 0; i < 8; i++) out += CH[Number((c >> BigInt(5 * (7 - i))) & 31n)];
+    return out;
   }
 
   function buildChecks(a) {
     const list = [];
-    list.push({ name: 'Bitcoin', addr: a.btc, explorer: 'https://mempool.space/address/', run: () => checkMempoolStyle('https://mempool.space/api/address/', a.btc, 'BTC', 'bitcoin') });
-    list.push({ name: 'Bitcoin (legacy 1...)', addr: a.btcLegacy, explorer: 'https://mempool.space/address/', run: () => checkMempoolStyle('https://mempool.space/api/address/', a.btcLegacy, 'BTC', 'bitcoin') });
+    list.push({ name: 'Bitcoin', addr: a.btc, explorer: 'https://mempool.space/address/', run: () => checkBtc(a.btc) });
+    list.push({ name: 'Bitcoin (legacy 1...)', addr: a.btcLegacy, explorer: 'https://mempool.space/address/', run: () => checkBtc(a.btcLegacy) });
+    const bch = cashaddr('bitcoincash', a.btcLegacy), xec = cashaddr('ecash', a.btcLegacy);
+    list.push({ name: 'Bitcoin Cash (2017 fork)', addr: bch, explorer: 'https://blockchair.com/bitcoin-cash/address/', run: () => checkBch(a.btcLegacy) });
+    list.push({ name: 'Bitcoin SV (2018 fork)', addr: a.btcLegacy, explorer: 'https://whatsonchain.com/address/', run: () => checkBsv(a.btcLegacy) });
+    list.push({ name: 'eCash (2020 fork)', addr: xec, explorer: 'https://explorer.e.cash/address/', run: () => checkXec(a.btcLegacy) });
     for (const c of EVM) list.push({ name: c.name, addr: a.evm, explorer: c.explorer, run: () => checkEvm(c, a.evm) });
     list.push({ name: 'Hyperliquid', addr: a.evm, explorer: 'https://app.hyperliquid.xyz/explorer/address/', run: () => checkHyperliquid(a.evm) });
     list.push({ name: 'Solana', addr: a.sol, explorer: 'https://solscan.io/account/', run: () => checkSol(a.sol) });
+    list.push({ name: 'Eclipse', addr: a.sol, explorer: 'https://eclipsescan.xyz/account/', run: () => checkEclipse(a.sol) });
     list.push({ name: 'Tron', addr: a.trx, explorer: 'https://tronscan.org/#/address/', run: () => checkTrx(a.trx) });
     list.push({ name: 'XRP Ledger', addr: a.xrp, explorer: 'https://xrpscan.com/account/', run: () => checkXrp(a.xrp) });
+    list.push({ name: 'Xahau', addr: a.xrp, explorer: 'https://xahauexplorer.com/account/', run: () => checkXahau(a.xrp) });
     list.push({ name: 'Sui', addr: a.sui, explorer: 'https://suiscan.xyz/mainnet/account/', run: () => checkSui(a.sui) });
     list.push({ name: 'Aptos', addr: a.apt, explorer: 'https://explorer.aptoslabs.com/account/', explorerSuffix: '?network=mainnet', run: () => checkApt(a.apt) });
-    list.push({ name: 'Litecoin', addr: a.ltc, explorer: 'https://litecoinspace.org/address/', run: () => checkMempoolStyle('https://litecoinspace.org/api/address/', a.ltc, 'LTC', 'litecoin') });
+    list.push({ name: 'Movement', addr: a.apt, explorer: 'https://explorer.movementnetwork.xyz/account/', explorerSuffix: '?network=mainnet', run: () => checkMovement(a.apt) });
+    list.push({ name: 'Litecoin', addr: a.ltc, explorer: 'https://litecoinspace.org/address/', run: () => checkLtc(a.ltc) });
     list.push({ name: 'Dogecoin', addr: a.doge, explorer: 'https://dogechain.info/address/', run: () => checkDoge(a.doge) });
-    for (const c of COSMOS) list.push({ name: c.name, addr: a.cosmos[c.key], explorer: c.explorer, unavailable: c.unavailable, run: () => checkCosmos(c, a.cosmos[c.key]) });
+    for (const c of COSMOS) { const ad = c.eth ? a.cosmosEth[c.key] : a.cosmos[c.key]; list.push({ name: c.name, addr: ad, explorer: c.explorer, unavailable: c.unavailable, run: () => checkCosmos(c, ad) }); }
     list.push({ name: INJ.name, addr: a.inj, explorer: INJ.explorer, run: () => checkCosmos(INJ, a.inj) });
     return list;
   }
 
+  // Prices by CoinGecko id. DefiLlama's price API takes the same ids, has no key and no
+  // tight rate limit, so it goes first; CoinGecko fills any gaps (its free API allows only
+  // a few calls a minute). Results are cached in this browser for five minutes so a quick
+  // rescan does not ask again. Only coin ids are sent, never addresses.
+  const PRICE_CACHE = 'seedcheckr-prices', PRICE_TTL = 5 * 60 * 1000;
   async function fetchPrices(ids) {
+    const out = {};
+    let cache = {};
+    try { cache = JSON.parse(localStorage.getItem(PRICE_CACHE) || '{}'); } catch (e) { cache = {}; }
+    const now = Date.now();
+    for (const id of ids) if (cache[id] && now - cache[id].t < PRICE_TTL) out[id] = cache[id].p;
+    const cached = new Set(Object.keys(out));
+    let missing = [...ids].filter((id) => !(id in out));
+    for (let i = 0; i < missing.length; i += 60) {
+      try {
+        const j = await fetchJSON('https://coins.llama.fi/prices/current/' + missing.slice(i, i + 60).map((id) => 'coingecko:' + encodeURIComponent(id)).join(','), undefined, 10000);
+        for (const [k, v] of Object.entries(j.coins || {})) if (v && typeof v.price === 'number') out[k.replace(/^coingecko:/, '')] = v.price;
+      } catch (e) { /* fall through to CoinGecko */ }
+    }
+    missing = missing.filter((id) => !(id in out));
+    if (missing.length) {
+      try {
+        const j = await fetchJSON('https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&ids=' + encodeURIComponent(missing.join(',')), undefined, 10000);
+        for (const [k, v] of Object.entries(j)) if (v && typeof v.usd === 'number') out[k] = v.usd;
+      } catch (e) { /* amounts still show, without dollars */ }
+    }
     try {
-      const j = await fetchJSON('https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&ids=' + encodeURIComponent([...ids].join(',')), undefined, 10000);
-      const out = {};
-      for (const [k, v] of Object.entries(j)) if (v && typeof v.usd === 'number') out[k] = v.usd;
-      return out;
-    } catch (e) { return {}; }
+      for (const [id, p] of Object.entries(out)) if (!cached.has(id)) cache[id] = { p, t: now };
+      localStorage.setItem(PRICE_CACHE, JSON.stringify(cache));
+    } catch (e) { /* private mode: no cache */ }
+    return out;
   }
 
   // ---------------- formatting ----------------
@@ -335,7 +637,7 @@
     let done = 0;
     ptext.textContent = 'Checking ' + total + ' networks';
 
-    const priceIds = new Set();
+    const priceIds = new Set(Object.values(HL_COINS).filter(Boolean));   // always asked, so the request says nothing about this wallet
     const results = await Promise.all(checks.map(async (c) => {
       let r;
       try {
@@ -370,6 +672,7 @@
     }
     const unavailable = results.filter((r) => !r.ok && r.check.unavailable).length;
     const failed = total - answered - unavailable;
+    const partly = results.filter((r) => r.ok && r.partial && !r.holdings.some((x) => x.amount > 0)).length;   // answered, but not every token was read
     const verdictEl = $('#verdict');
     const textEl = $('#verdict-text');
     const subEl = $('#verdict-sub');
@@ -388,7 +691,10 @@
       verdictEl.classList.add('no');
       textEl.innerHTML = 'You are <em>not</em> in possession of coins.';
       subEl.textContent = answered + ' networks checked. Nothing. Not even dust.';
-      fineEl.textContent = (otherTokens ? plural(otherTokens, 'airdropped token', 'airdropped tokens') + ' found, which does not count. ' : '') + (failed ? plural(failed, 'network', 'networks') + ' did not answer, so there is still a sliver of hope.' : '');
+      const gaps = [];
+      if (failed) gaps.push(plural(failed, 'network', 'networks') + ' did not answer');
+      if (partly) gaps.push(plural(partly, 'network', 'networks') + ' only partly answered');
+      fineEl.textContent = (otherTokens ? plural(otherTokens, 'airdropped token', 'airdropped tokens') + ' found, which does not count. ' : '') + (gaps.length ? gaps.join(' and ') + ', so there is still a sliver of hope.' : '');
     }
 
     // the reveal
@@ -408,6 +714,8 @@
 
   function renderCaseFile(results, failed) {
     const ul = $('#rows');
+    const quiet = $('#rows-nothing');
+    let nothingCount = 0;
     const rank = (r) => (!r.ok ? (r.check.unavailable ? 3 : 1) : r.holdings.some((x) => x.amount > 0) ? 0 : 2);
     const sorted = results.map((r, i) => [r, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map((x) => x[0]);
     for (const r of sorted) {
@@ -434,19 +742,23 @@
       const bits = [];
       if (r.ok && r.others) bits.push(plural(r.others, 'other token', 'other tokens') + ' not counted');
       if (r.ok && r.partial) bits.push(r.partial);
+      if (r.ok && r.note) bits.push(r.note);
       if (!r.ok) bits.push(r.error);
       more.textContent = bits.join('. ');
       const link = document.createElement('a');
-      link.href = r.check.explorer + r.check.addr + (r.check.explorerSuffix || '');
+      link.href = r.check.explorer.includes('{a}') ? r.check.explorer.replace('{a}', r.check.addr) : r.check.explorer + r.check.addr + (r.check.explorerSuffix || '');
       link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open in explorer';
       more.appendChild(link);
       li.append(name, amount, addrShort, addrFull, more);
       const toggle = () => li.classList.toggle('expanded');
       li.addEventListener('click', (e) => { if (e.target.tagName !== 'A') toggle(); });
       li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
-      ul.appendChild(li);
+      if (r.ok && !nonzero.length && !r.others && !r.partial) { quiet.appendChild(li); nothingCount++; }
+      else ul.appendChild(li);
     }
-    $('#casefile-note').textContent = 'Bitcoin and Litecoin show the first receive address only; a wallet that has been used may hold coins on later addresses, which the BTC zpub entry on the device covers.' + (failed ? ' Tap a row for the reason it did not answer.' : '');
+    $('#nothing-wrap').hidden = nothingCount === 0;
+    $('#nothing-summary').textContent = plural(nothingCount, 'network', 'networks') + ' with nothing on them';
+    $('#casefile-note').textContent = 'Bitcoin and Litecoin show the first receive address only; a wallet that has been used may hold coins on later addresses, which the BTC zpub entry on the device covers. Bitcoin Cash, Bitcoin SV and eCash are read at the legacy Bitcoin address, and Ethereum Classic, EthereumPoW and PulseChain at the Ethereum address, so they show coins that were there when each chain split off.' + (failed ? ' Tap a row for the reason it did not answer.' : '');
   }
 
   // ---------------- entry ----------------
