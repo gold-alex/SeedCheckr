@@ -26,6 +26,7 @@
   const COSMOS = [
     ['atom', 'cosmos'], ['osmo', 'osmo'], ['tia', 'celestia'], ['dydx', 'dydx'],
     ['sei', 'sei'], ['akt', 'akash'], ['juno', 'juno'], ['stars', 'stars'],
+    ['noble', 'noble'], ['ntrn', 'neutron'], ['strd', 'stride'], ['axl', 'axelar'],
   ];
 
   // ---- bytes ----
