@@ -13,4 +13,9 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     # then URL + payload -> the device's QR encoder -> jsQR (an unrelated reader) -> the same URL
     npm install && node verify_site.js 10
 
+    # the page against the live networks: runs docs/app.js unchanged with a stub DOM, prints the
+    # verdict and case file, and checks every endpoint's CORS answer for a github.io origin
+    node site_live.js demo      # a famous wallet, expects "are in possession"
+    node site_live.js random    # a fresh mnemonic, expects "not in possession"
+
 `test_portfolio "words..."` prints the payload and every address for one mnemonic. `test_qr URL PAYLOAD` (or `test_qr -t TEXT`) dumps the QR modules as text, exactly what the screen would show.
