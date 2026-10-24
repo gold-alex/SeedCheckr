@@ -206,8 +206,15 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     k = 5; if (progress) progress(k, chains_count()); }
 
   // ---- DOGE P2PKH ----
-  { uint32_t p[] = { 44|H, 3|H, 0|H, 0, 0 };
-    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+  { uint32_t p[] = { 44|H, 3|H };
+    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    uint32_t fp = hdnode_fingerprint(&parent);
+    n = parent;
+    if (!hdnode_private_ckd(&n, 0|H)) goto done;
+    hdnode_fill_public_key(&n);
+    cu_xpub_record(&out[5], 0x78, &n, fp);                              // whole DOGE wallet
+    if (!hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
+    hdnode_fill_public_key(&n);
     ecdsa_get_address(n.public_key, 0x1e, HASHER_SHA2_RIPEMD, HASHER_SHA2D, out[5].addr, CHAIN_ADDR_MAX);
     ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, out[5].raw); out[5].rawlen = 20;
     k = 6; if (progress) progress(k, chains_count()); }

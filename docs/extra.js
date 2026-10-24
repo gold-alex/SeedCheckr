@@ -167,6 +167,8 @@
     if (kind === 'btc-wpkh') return bech32('bc', [0, ...toWords(hash160(pub33))]);
     if (kind === 'ltc-wpkh') return bech32('ltc', [0, ...toWords(hash160(pub33))]);
     if (kind === 'ltc-pkh') return base58check(cat(Uint8Array.of(0x30), hash160(pub33)));
+    if (kind === 'doge-pkh') return base58check(cat(Uint8Array.of(0x1e), hash160(pub33)));
+    if (kind === 'dash-pkh') return base58check(cat(Uint8Array.of(0x4c), hash160(pub33)));
     if (kind === 'eth') { const P = decompress(pub33); return eip55(keccakAddr(P)); }
     throw new Error('unknown kind ' + kind);
   }
@@ -182,15 +184,15 @@
   }
   // Gap-limit scan: walk receive and change addresses in batches until `gap` unused ones in a row.
   // query(addr) -> { used: bool, sats: BigInt }. Returns { sats, used, first }.
-  async function scanWallet(rec, kind, query, gaps) {
+  async function scanWallet(rec, kind, query, gaps, per = 5) {
     let sats = 0n, used = 0;
     for (const [chainIdx, gap] of [[0, gaps[0]], [1, gaps[1]]]) {
       let i = 0, empty = 0;
       while (empty < gap && i < 400) {
-        const batch = childAddrs(rec, kind, chainIdx, i, 5);
+        const batch = childAddrs(rec, kind, chainIdx, i, per);
         const res = await Promise.all(batch.map(query));
         for (const r of res) { if (r.used) { used++; empty = 0; sats += r.sats; } else empty++; }
-        i += 5;
+        i += per;
       }
     }
     return { sats, used, first: childAddrs(rec, kind, 0, 0, 1)[0] };
@@ -342,7 +344,34 @@
     const post = (body) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const out = [];
     const add = (name, a, explorer, run, extra) => out.push(Object.assign({ name, addr: a, explorer, run }, extra || {}));
-    const utxoMempool = (name, a, apis, symbol, price, explorer) => add(name, a, explorer, () => firstOk(apis, (b) => K.checkMempoolStyle(b, a, symbol, price)));
+    // One address of a whole-wallet scan -> { used, sats }, from whichever API `src` names.
+    const utxoQuery = async (src, a, symbol) => {
+      if (src.startsWith('https://')) {   // mempool.space-style (Esplora)
+        const j = await fetchJSON(src + a), c = j.chain_stats, m = j.mempool_stats;
+        if (!c || !m) throw new Error('unexpected answer');
+        return { used: c.tx_count + m.tx_count > 0, sats: BigInt(c.funded_txo_sum) - BigInt(c.spent_txo_sum) + BigInt(m.funded_txo_sum) - BigInt(m.spent_txo_sum) };
+      }
+      if (src === 'bitcore') {            // BitPay: an empty coin list means never used
+        const base = 'https://api.bitcore.io/api/' + symbol + '/mainnet/address/' + a;
+        const coins = await fetchJSON(base + '?limit=1');
+        if (!Array.isArray(coins)) throw new Error('unexpected answer');
+        if (!coins.length) return { used: false, sats: 0n };
+        const j = await fetchJSON(base + '/balance');
+        if (j.balance === undefined) throw new Error('unexpected answer');
+        return { used: true, sats: BigInt(j.balance) };
+      }
+      if (src === 'insight') {            // insight.dash.org
+        const j = await fetchJSON('https://insight.dash.org/insight-api/addr/' + a + '?noTxList=1');
+        if (j.balanceSat === undefined) throw new Error('unexpected answer');
+        return { used: (j.txApperances || 0) + (j.unconfirmedTxApperances || 0) > 0, sats: BigInt(j.balanceSat) + BigInt(j.unconfirmedBalanceSat || 0) };
+      }
+      if (src === 'blockcypher') {
+        const j = await fetchJSON('https://api.blockcypher.com/v1/' + symbol.toLowerCase() + '/main/addrs/' + a + '/balance');
+        if (j.final_balance === undefined) throw new Error('unexpected answer');
+        return { used: (j.final_n_tx || 0) > 0, sats: BigInt(j.final_balance) };
+      }
+      throw new Error('unknown source ' + src);
+    };
 
     for (const { type, bytes: b } of records) {
       switch (type) {
@@ -355,7 +384,8 @@
         case 0x15: { const a = addr.p2sh([0x00], b); add('Bitcoin SV (BSV wallets)', a, 'https://whatsonchain.com/address/', () => K.checkBsv(a)); break; }
         case 0x16: { const a = cashaddr('ecash', 0, b); add('eCash (XEC wallets)', a, 'https://explorer.e.cash/address/', () => K.checkXecHash(hex(b))); break; }
         case 0x17: { const a = addr.p2sh([0x4c], b);
-          add('Dash', a, 'https://insight.dash.org/insight/address/', () => firstOk(['blockcypher', '3xpl'], async (src) => {
+          add('Dash', a, 'https://insight.dash.org/insight/address/', () => firstOk(['insight', 'blockcypher', '3xpl'], async (src) => {
+            if (src === 'insight') { const j = await fetchJSON('https://insight.dash.org/insight-api/addr/' + a + '?noTxList=1'); if (j.balanceSat === undefined) throw new Error('unexpected answer'); return one(h('DASH', units(BigInt(j.balanceSat) + BigInt(j.unconfirmedBalanceSat || 0), 8), 'dash')); }
             if (src === 'blockcypher') { const j = await fetchJSON('https://api.blockcypher.com/v1/dash/main/addrs/' + a + '/balance'); return one(h('DASH', units(BigInt(j.final_balance), 8), 'dash')); }
             const j = await fetchJSON('https://sandbox-api.3xpl.com/dash/address/' + a + '?data=balances');
             if (!j.data || !j.data.balances) throw new Error('unexpected answer'); const v = (j.data.balances['dash-main'] || {}).dash; return one(h('DASH', units(BigInt(v ? v.balance : 0), 8), 'dash'));
@@ -365,7 +395,13 @@
             if (src === '3xpl') { const j = await fetchJSON('https://sandbox-api.3xpl.com/zcash/address/' + a + '?data=balances'); if (!j.data || !j.data.balances) throw new Error('unexpected answer'); const v = (j.data.balances['zcash-main'] || {}).zcash; return one(h('ZEC', units(BigInt(v ? v.balance : 0), 8), 'zcash')); }
             const j = await fetchJSON('https://api.blockchair.com/zcash/dashboards/address/' + a); const d = ((j.data || {})[a] || {}).address || {}; return one(h('ZEC', units(BigInt(d.balance || 0), 8), 'zcash'));
           })); break; }
-        case 0x19: { const a = addr.p2sh([0x1e], b); utxoMempool('DigiByte', a, ['https://digiexplorer.info/api/address/'], 'DGB', 'digibyte', 'https://digiexplorer.info/address/'); break; }
+        case 0x19: { const a = addr.p2sh([0x1e], b);
+          add('DigiByte', a, 'https://chainz.cryptoid.info/dgb/address.dws?' + a, () => firstOk(['https://digiexplorer.info/api/address/', 'cryptoid'], async (src) => {
+            if (src !== 'cryptoid') return K.checkMempoolStyle(src, a, 'DGB', 'digibyte');
+            const v = await fetchJSON('https://chainz.cryptoid.info/dgb/api.dws?q=getbalance&a=' + a);
+            if (typeof v !== 'number') throw new Error('unexpected answer');
+            return one(h('DGB', v, 'digibyte'));
+          })); break; }
         case 0x1A: { const a = addr.p2sh([0x3c], b);
           add('Ravencoin', a, 'https://blockbook.ravencoin.org/address/', async () => {
             const j = await fetchJSON('https://blockbook.ravencoin.org/api/v2/address/' + a + '?details=basic');
@@ -521,24 +557,33 @@
           break;
         }
         // ---- whole wallets the page scans itself (no xpub service with browser access) ----
-        case 0x74: case 0x75: case 0x76: {
+        case 0x74: case 0x75: case 0x76: case 0x78: case 0x79: {
           if (b.length !== 69) break;
           const [kind, name, replaces, symbol, price, apis, explorer] = {
             0x74: ['btc-tr', 'Bitcoin taproot wallet (every address)', 'Bitcoin taproot (bc1p)', 'BTC', 'bitcoin', ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'], 'https://mempool.space/address/'],
             0x75: ['ltc-wpkh', 'Litecoin wallet (segwit, every address)', 'Litecoin', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/'], 'https://litecoinspace.org/address/'],
             0x76: ['ltc-pkh', 'Litecoin legacy wallet (every address)', 'Litecoin legacy (L...)', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/'], 'https://litecoinspace.org/address/'],
+            0x78: ['doge-pkh', 'Dogecoin wallet (every address)', 'Dogecoin', 'DOGE', 'dogecoin', ['bitcore', 'blockcypher'], 'https://dogechain.info/address/'],
+            0x79: ['dash-pkh', 'Dash wallet (every address)', 'Dash', 'DASH', 'dash', ['insight', 'blockcypher'], 'https://insight.dash.org/insight/address/'],
           }[type];
           const first = childAddrs(b, kind, 0, 0, 1)[0];
-          const query = async (a) => {
-            const j = await firstOk(apis, (u) => fetchJSON(u + a));
-            const c = j.chain_stats, m = j.mempool_stats;
-            if (!c || !m) throw new Error('unexpected answer');
-            return { used: c.tx_count + m.tx_count > 0, sats: BigInt(c.funded_txo_sum) - BigInt(c.spent_txo_sum) + BigInt(m.funded_txo_sum) - BigInt(m.spent_txo_sum) };
-          };
+          const query = (a) => firstOk(apis, (u) => utxoQuery(u, a, symbol));
           add(name, first, explorer, async () => {
-            const w = await scanWallet(b, kind, query, [10, 5]);
+            // BlockCypher allows ~3 requests a second per visitor, so its coins go 2 at a time
+            const w = await scanWallet(b, kind, query, [10, 5], type >= 0x78 ? 2 : 5);
             return { holdings: [h(symbol, units(w.sats, 8), price)], others: 0, partial: null, note: w.used ? w.used + ' addresses used' : null };
           }, { replaces: [replaces] });
+          break;
+        }
+        // ---- Ravencoin: its Blockbook explorer scans an xpub itself, in one request ----
+        case 0x7A: {
+          if (b.length !== 69) break;
+          const x = addr.xpub(b, XPUB);
+          add('Ravencoin wallet (every address)', x, 'https://blockbook.ravencoin.org/xpub/', async () => {
+            const j = await fetchJSON('https://blockbook.ravencoin.org/api/v2/xpub/' + x + '?details=basic');
+            if (j.balance === undefined) throw new Error('unexpected answer');
+            return { holdings: [h('RVN', units(BigInt(j.balance) + BigInt(j.unconfirmedBalance || 0), 8), 'ravencoin')], others: 0, partial: null, note: j.usedTokens ? j.usedTokens + ' addresses used' : null };
+          }, { replaces: ['Ravencoin'] });
           break;
         }
         // ---- MetaMask accounts 2-5 (m/44'/60'/0'/0/1..4) on the biggest EVM networks ----

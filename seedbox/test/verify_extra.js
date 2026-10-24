@@ -68,9 +68,9 @@ for (const m of mns) {
   ok(res && res.done, 'frames assemble');
   const recs = S.records(res.bytes);
   const ext = dev.slice(20);                                                          // device rows after the 20 core rows
-  const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x77);                  // account xpub records
+  const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x7F);                  // account xpub records
   ok(recs.length - acct.length === ext.length, 'one record per device extension row (' + (recs.length - acct.length) + ' vs ' + ext.length + ')');
-  ok(acct.length === 8, 'eight account key records');
+  ok(acct.length === 11, "eleven account key records");
   const built = X.build(recs, K);
   const pageAddrs = new Set(built.map((c) => c.addr.replace(/^[PX]-/, '')));
   for (const [name, a] of ext) {
@@ -99,6 +99,9 @@ for (const m of mns) {
   ok(X.childAddrs(rec(0x74), 'btc-tr', 0, 0, 1)[0] === devAddr('BTC taproot'), 'taproot wallet address 0 == device');
   ok(X.childAddrs(rec(0x75), 'ltc-wpkh', 0, 0, 1)[0] === devAddr('LTC'), 'LTC segwit wallet address 0 == device');
   ok(X.childAddrs(rec(0x76), 'ltc-pkh', 0, 0, 1)[0] === devAddr('LTC legacy (L..)'), 'LTC legacy wallet address 0 == device');
+  ok(X.childAddrs(rec(0x78), 'doge-pkh', 0, 0, 1)[0] === dev[5][1], 'DOGE wallet address 0 == device');
+  ok(X.childAddrs(rec(0x79), 'dash-pkh', 0, 0, 1)[0] === devAddr('DASH'), 'Dash wallet address 0 == device');
+  ok(X.base58check(Uint8Array.from([0x3c, ...X.firstPkh(rec(0x7A))])) === devAddr('RVN'), 'Ravencoin wallet address 0 == device');
   const ethChain = rec(0x77);
   ok(X.walletAddr('eth', X.ckdPub(ethChain.slice(36, 69), ethChain.slice(4, 36), 0).pub) === dev[0][1], 'MetaMask account 1 == device ETH row');
   try {

@@ -417,8 +417,13 @@
     return { holdings: [h('MOVE', units(await aptosBalance(MOVE_API, addr), 8), 'movement')], others: 0, partial: null };
   }
   async function checkDoge(addr) {
-    const j = await fetchJSON('https://api.blockcypher.com/v1/doge/main/addrs/' + addr + '/balance');
-    return { holdings: [h('DOGE', units(BigInt(j.final_balance), 8), 'dogecoin')], others: 0, partial: null };
+    const sats = await firstOk(['bitcore', 'blockcypher'], async (src) => {
+      if (src === 'bitcore') { const j = await fetchJSON('https://api.bitcore.io/api/DOGE/mainnet/address/' + addr + '/balance'); if (j.balance === undefined) throw new Error('unexpected answer'); return BigInt(j.balance); }
+      const j = await fetchJSON('https://api.blockcypher.com/v1/doge/main/addrs/' + addr + '/balance');
+      if (j.final_balance === undefined) throw new Error('unexpected answer');
+      return BigInt(j.final_balance);
+    });
+    return { holdings: [h('DOGE', units(sats, 8), 'dogecoin')], others: 0, partial: null };
   }
   // Public Solana RPCs refuse the "list all token accounts" call, so the page
   // derives the wallet's USDC and USDT accounts itself (ata.js) and reads those.

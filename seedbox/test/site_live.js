@@ -81,7 +81,7 @@ globalThis.fetch = async (url, opts = {}) => {
     } catch (e) { entry.preflight = { err: e.message }; }
   }
   try {
-    const r = await realFetch(url, Object.assign({}, opts, { headers: Object.assign({}, opts.headers || {}, { origin: ORIGIN }) }));
+    const r = await realFetch(url, Object.assign({}, opts, { headers: Object.assign({}, opts.headers || {}, { origin: ORIGIN, 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' }) }));
     entry.status = r.status; entry.acao = r.headers.get('access-control-allow-origin');
     return r;
   } catch (e) { entry.err = e.message; throw e; } finally { entry.ms = Date.now() - t0; }
