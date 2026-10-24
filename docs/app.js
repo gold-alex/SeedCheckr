@@ -374,7 +374,9 @@
   }
   async function checkXec(legacy) {
     const raw = window.SolanaATA.b58decode(legacy);            // version byte, 20-byte hash, checksum
-    const hash = D.bytesToHex(raw.slice(1, 21));
+    return checkXecHash(D.bytesToHex(raw.slice(1, 21)));
+  }
+  async function checkXecHash(hash) {
     const b = await fetchOnce('https://chronik.e.cash/script/p2pkh/' + hash + '/utxos', undefined, 15000, 'bytes');
     let sats = 0n;
     pbFields(b, 0, b.length, (f, w, v) => { if (f === 2 && w === 2) pbFields(b, v[0], v[1], (f2, w2, v2) => { if (f2 === 5 && w2 === 0) sats += v2; }); });
@@ -631,32 +633,66 @@
     $('#stage').hidden = false;
 
     const checks = buildChecks(addr);
-    const total = checks.length;
     const meter = $('#meter'), fill = $('#meter-fill'), ptext = $('#progress-text');
-    meter.setAttribute('aria-valuemax', String(total));
-    let done = 0;
-    ptext.textContent = 'Checking ' + total + ' networks';
+    meter.setAttribute('aria-valuemax', String(checks.length));
+    ptext.textContent = 'Checking ' + checks.length + ' networks';
+    state.results = await runChecks(checks, (done, total) => {
+      fill.style.width = (100 * done / total) + '%';
+      meter.setAttribute('aria-valuenow', String(done));
+      ptext.textContent = done + ' of ' + total + ' networks answered';
+    });
+    const v = await showVerdict(state.results);
 
-    const priceIds = new Set(Object.values(HL_COINS).filter(Boolean));   // always asked, so the request says nothing about this wallet
-    const results = await Promise.all(checks.map(async (c) => {
+    // the reveal
+    const env = $('#envelope');
+    env.classList.remove('checking');
+    await wait(900);
+    env.classList.add('open');
+    await wait(750);
+    $('#stage').hidden = true;
+    const verdictEl = $('#verdict');
+    if (!reduced) verdictEl.classList.add('animate');
+    verdictEl.hidden = false;
+    if (v.chainsWithCoins > 0 && !reduced) confetti();
+    await wait(500);
+    $('#more').hidden = !window.SeedScan || !window.SeedExtra;
+    $('#casefile').hidden = false;
+  }
+
+  const state = { results: [], extraDone: false };
+
+  // Every price id the page can ask for goes in every request, so a request says nothing
+  // about which coins this wallet holds.
+  function allPriceIds() {
+    const ids = new Set(Object.values(HL_COINS).filter(Boolean));
+    if (window.SeedExtra) for (const id of window.SeedExtra.PRICE_IDS) ids.add(id);
+    return ids;
+  }
+
+  async function runChecks(checks, onProgress) {
+    let done = 0;
+    return Promise.all(checks.map(async (c) => {
       let r;
       try {
         if (c.unavailable) throw new Error(c.unavailable);
         r = await c.run();
-        for (const x of r.holdings) if (x.price) priceIds.add(x.price);
         r.ok = true;
       } catch (e) {
         r = { ok: false, error: e.message || String(e), holdings: [], others: 0, partial: null };
       }
       done++;
-      fill.style.width = (100 * done / total) + '%';
-      meter.setAttribute('aria-valuenow', String(done));
-      ptext.textContent = done + ' of ' + total + ' networks answered';
+      if (onProgress) onProgress(done, checks.length);
       return Object.assign({ check: c }, r);
     }));
-    const prices = await fetchPrices(priceIds);
+  }
 
-    // tally
+  // Prices, tally, verdict text and case file for every result so far. Safe to call again
+  // after the "more chains" scan adds results.
+  async function showVerdict(results) {
+    const priceIds = allPriceIds();
+    for (const r of results) for (const x of r.holdings) if (x.price) priceIds.add(x.price);
+    const prices = await fetchPrices(priceIds);
+    const total = results.length;
     let usd = 0, chainsWithCoins = 0, answered = 0, otherTokens = 0, priced = true;
     for (const r of results) {
       if (!r.ok) continue;
@@ -666,6 +702,7 @@
       for (const x of r.holdings) {
         if (x.amount <= 0) continue;
         any = true;
+        x.usd = undefined;
         if (prices[x.price] != null) { x.usd = x.amount * prices[x.price]; usd += x.usd; } else priced = false;
       }
       if (any) chainsWithCoins++;
@@ -677,6 +714,7 @@
     const textEl = $('#verdict-text');
     const subEl = $('#verdict-sub');
     const fineEl = $('#verdict-fine');
+    verdictEl.classList.remove('yes', 'no');
 
     if (answered === 0) {
       textEl.innerHTML = 'The lab <em>lost the envelope.</em>';
@@ -696,25 +734,64 @@
       if (partly) gaps.push(plural(partly, 'network', 'networks') + ' only partly answered');
       fineEl.textContent = (otherTokens ? plural(otherTokens, 'airdropped token', 'airdropped tokens') + ' found, which does not count. ' : '') + (gaps.length ? gaps.join(' and ') + ', so there is still a sliver of hope.' : '');
     }
-
-    // the reveal
-    const env = $('#envelope');
-    env.classList.remove('checking');
-    await wait(900);
-    env.classList.add('open');
-    await wait(750);
-    $('#stage').hidden = true;
-    if (!reduced) verdictEl.classList.add('animate');
-    verdictEl.hidden = false;
-    if (chainsWithCoins > 0 && !reduced) confetti();
     renderCaseFile(results, failed);
-    await wait(500);
-    $('#casefile').hidden = false;
+    return { chainsWithCoins };
+  }
+
+  // ---------------- "more chains": the moving QR on the device ----------------
+  // The Portfolio QR is full, so every other key family comes from a short loop of QR
+  // frames the device shows after it (docs/EXTENSIONS.md). The page reads them with the
+  // camera, decodes the records, and checks those networks too.
+  const extraHelpers = {
+    fetchJSON, rpc, firstOk, units, h, checkEvm, checkMempoolStyle, checkBtc, checkLtc, checkBch, checkBsv, checkXecHash, checkCosmos, checkSol,
+    fetchText: (url) => fetchOnce(url, undefined, 15000, 'text'),
+    evm: (key) => EVM.find((c) => c.key === key),
+  };
+  let stopCamera = null;
+  function moreStatus(t) { $('#more-status').textContent = t; }
+  function closeCamera() { if (stopCamera) { stopCamera(); stopCamera = null; } $('#more-cam').hidden = true; $('#more-start').hidden = state.extraDone; }
+  async function addExtra(records) {
+    if (state.extraDone) return;          // later frames of a finished set must not add the networks again
+    state.extraDone = true;
+    closeCamera();
+    const checks = window.SeedExtra.build(records, extraHelpers);
+    $('#more-text').textContent = 'Checking ' + checks.length + ' more networks…';
+    const more = await runChecks(checks, (d, t) => { $('#more-text').textContent = d + ' of ' + t + ' more networks answered'; });
+    state.results = state.results.concat(more);
+    await showVerdict(state.results);
+    $('#more-text').textContent = 'Added ' + plural(checks.length, 'network', 'networks') + ' from the moving QR. The verdict above now covers ' + state.results.length + '.';
+    $('#verdict').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+  }
+  function startScan() {
+    if (stopCamera || state.extraDone) return;
+    const asm = new window.SeedScan.Assembler();
+    $('#more-cam').hidden = false;
+    $('#more-start').hidden = true;
+    moreStatus('Starting the camera…');
+    const session = window.SeedScan.startCamera($('#more-video'), (text) => {
+      if (stopCamera !== session || state.extraDone) return;
+      const p = asm.add(text);
+      if (p.error) moreStatus(p.error);
+      else if (p.total) moreStatus('Got ' + p.have + ' of ' + p.total + ' frames. Keep it steady.');
+      if (p.done) {
+        let recs;
+        try { recs = window.SeedScan.records(p.bytes); } catch (e) { moreStatus('Those frames did not decode: ' + e.message); return; }
+        addExtra(recs);
+      }
+    });
+    stopCamera = session;
+    session.ready.then(() => { if (stopCamera === session) moreStatus('Point the camera at the moving QR on the SeedBox.'); })
+      .catch((e) => {
+        if (stopCamera !== session) return;   // an older, cancelled session: leave the current one alone
+        if (String(e && e.message || e) !== 'stopped') moreStatus('Camera not available: ' + (e && e.message || e));
+        stopCamera = null; $('#more-cam').hidden = true; $('#more-start').hidden = state.extraDone;
+      });
   }
 
   function renderCaseFile(results, failed) {
     const ul = $('#rows');
     const quiet = $('#rows-nothing');
+    ul.textContent = ''; quiet.textContent = '';
     let nothingCount = 0;
     const rank = (r) => (!r.ok ? (r.check.unavailable ? 3 : 1) : r.holdings.some((x) => x.amount > 0) ? 0 : 2);
     const sorted = results.map((r, i) => [r, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map((x) => x[0]);
@@ -746,9 +823,12 @@
       if (!r.ok) bits.push(r.error);
       more.textContent = bits.join('. ');
       const link = document.createElement('a');
-      link.href = r.check.explorer.includes('{a}') ? r.check.explorer.replace('{a}', r.check.addr) : r.check.explorer + r.check.addr + (r.check.explorerSuffix || '');
-      link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open in explorer';
-      more.appendChild(link);
+      const linkAddr = r.check.explorerAddr !== undefined ? r.check.explorerAddr : r.check.addr;
+      if (linkAddr && r.check.explorer) {
+        link.href = r.check.explorer.includes('{a}') ? r.check.explorer.replace('{a}', linkAddr) : r.check.explorer + linkAddr + (r.check.explorerSuffix || '');
+        link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open in explorer';
+        more.appendChild(link);
+      }
       li.append(name, amount, addrShort, addrFull, more);
       const toggle = () => li.classList.toggle('expanded');
       li.addEventListener('click', (e) => { if (e.target.tagName !== 'A') toggle(); });
@@ -769,5 +849,7 @@
   } else {
     run(frag);
   }
+  $('#more-start').addEventListener('click', startScan);
+  $('#more-stop').addEventListener('click', closeCamera);
   window.addEventListener('hashchange', () => location.reload());
 })();

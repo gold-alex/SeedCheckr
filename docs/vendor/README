@@ -1,0 +1,7 @@
+Third-party code served with the page, unmodified apart from a one-line header.
+
+jsQR.js        jsQR 1.4.0 (https://github.com/cozmo/jsQR), dist/jsQR.js from the npm
+               package. Apache License 2.0, full text in jsQR.LICENSE. QR decoder
+               that scan.js loads only when the browser has no BarcodeDetector
+               (Safari, Firefox). Same version seedbox/test uses to read back the
+               device's codes.

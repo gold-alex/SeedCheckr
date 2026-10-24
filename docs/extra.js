@@ -1,0 +1,385 @@
+// extra.js - the "more chains" records (docs/EXTENSIONS.md) turned into addresses and
+// balance checks. The device sends public key material only; this file rebuilds each
+// chain's address format and says how to ask a public API for its balance.
+// Runs in the browser and in node (the host tests require it). No dependencies.
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.SeedExtra = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  // ---------------- small crypto, all synchronous ----------------
+  const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const cat = (...arrs) => { const o = new Uint8Array(arrs.reduce((a, x) => a + x.length, 0)); let p = 0; for (const x of arrs) { o.set(x, p); p += x.length; } return o; };
+  const utf8 = (s) => new TextEncoder().encode(s);
+
+  // SHA-256 / SHA-224 (FIPS 180-4). WebCrypto has no SHA-224, and a sync SHA-256 keeps base58check simple.
+  const K256 = new Uint32Array([0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
+  function sha2_32(msg, iv, outLen) {
+    const H = new Uint32Array(iv);
+    const l = msg.length, nb = ((l + 9 + 63) >> 6) << 6;
+    const m = new Uint8Array(nb); m.set(msg); m[l] = 0x80;
+    const bits = l * 8; for (let i = 0; i < 8; i++) m[nb - 1 - i] = Math.floor(bits / 2 ** (8 * i)) & 0xff;
+    const W = new Uint32Array(64);
+    const rot = (x, n) => (x >>> n) | (x << (32 - n));
+    for (let o = 0; o < nb; o += 64) {
+      for (let i = 0; i < 16; i++) W[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
+      for (let i = 16; i < 64; i++) {
+        const s0 = rot(W[i - 15], 7) ^ rot(W[i - 15], 18) ^ (W[i - 15] >>> 3), s1 = rot(W[i - 2], 17) ^ rot(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+        W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+      }
+      let [a, b, c, d, e, f, g, h] = H;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (h + (rot(e, 6) ^ rot(e, 11) ^ rot(e, 25)) + ((e & f) ^ (~e & g)) + K256[i] + W[i]) >>> 0;
+        const t2 = ((rot(a, 2) ^ rot(a, 13) ^ rot(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+        h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+    }
+    const out = new Uint8Array(32);
+    for (let i = 0; i < 8; i++) { out[4 * i] = H[i] >>> 24; out[4 * i + 1] = H[i] >>> 16; out[4 * i + 2] = H[i] >>> 8; out[4 * i + 3] = H[i]; }
+    return out.slice(0, outLen);
+  }
+  const sha256 = (m) => sha2_32(m, [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19], 32);
+  const sha224 = (m) => sha2_32(m, [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4], 28);
+
+  // SHA-512/256 (Algorand checksum), with BigInt lanes: inputs here are 32 bytes.
+  const K512 = ['428a2f98d728ae22', '7137449123ef65cd', 'b5c0fbcfec4d3b2f', 'e9b5dba58189dbbc', '3956c25bf348b538', '59f111f1b605d019', '923f82a4af194f9b', 'ab1c5ed5da6d8118', 'd807aa98a3030242', '12835b0145706fbe', '243185be4ee4b28c', '550c7dc3d5ffb4e2', '72be5d74f27b896f', '80deb1fe3b1696b1', '9bdc06a725c71235', 'c19bf174cf692694', 'e49b69c19ef14ad2', 'efbe4786384f25e3', '0fc19dc68b8cd5b5', '240ca1cc77ac9c65', '2de92c6f592b0275', '4a7484aa6ea6e483', '5cb0a9dcbd41fbd4', '76f988da831153b5', '983e5152ee66dfab', 'a831c66d2db43210', 'b00327c898fb213f', 'bf597fc7beef0ee4', 'c6e00bf33da88fc2', 'd5a79147930aa725', '06ca6351e003826f', '142929670a0e6e70', '27b70a8546d22ffc', '2e1b21385c26c926', '4d2c6dfc5ac42aed', '53380d139d95b3df', '650a73548baf63de', '766a0abb3c77b2a8', '81c2c92e47edaee6', '92722c851482353b', 'a2bfe8a14cf10364', 'a81a664bbc423001', 'c24b8b70d0f89791', 'c76c51a30654be30', 'd192e819d6ef5218', 'd69906245565a910', 'f40e35855771202a', '106aa07032bbd1b8', '19a4c116b8d2d0c8', '1e376c085141ab53', '2748774cdf8eeb99', '34b0bcb5e19b48a8', '391c0cb3c5c95a63', '4ed8aa4ae3418acb', '5b9cca4f7763e373', '682e6ff3d6b2b8a3', '748f82ee5defb2fc', '78a5636f43172f60', '84c87814a1f0ab72', '8cc702081a6439ec', '90befffa23631e28', 'a4506cebde82bde9', 'bef9a3f7b2c67915', 'c67178f2e372532b', 'ca273eceea26619c', 'd186b8c721c0c207', 'eada7dd6cde0eb1e', 'f57d4f7fee6ed178', '06f067aa72176fba', '0a637dc5a2c898a6', '113f9804bef90dae', '1b710b35131c471b', '28db77f523047d84', '32caab7b40c72493', '3c9ebe0a15c9bebc', '431d67c49c100d4c', '4cc5d4becb3e42b6', '597f299cfc657e2a', '5fcb6fab3ad6faec', '6c44198c4a475817'].map((x) => BigInt('0x' + x));
+  function sha512_256(msg) {
+    const M = (1n << 64n) - 1n, rot = (x, n) => ((x >> BigInt(n)) | (x << BigInt(64 - n))) & M;
+    const H = ['22312194fc2bf72c', '9f555fa3c84c64c2', '2393b86b6f53b151', '963877195940eabd', '96283ee2a88effe3', 'be5e1e2553863992', '2b0199fc2c85b8aa', '0eb72ddc81c52ca2'].map((x) => BigInt('0x' + x));
+    const l = msg.length, nb = ((l + 17 + 127) >> 7) << 7;
+    const m = new Uint8Array(nb); m.set(msg); m[l] = 0x80;
+    const bits = BigInt(l) * 8n; for (let i = 0; i < 16; i++) m[nb - 1 - i] = Number((bits >> BigInt(8 * i)) & 0xffn);
+    for (let o = 0; o < nb; o += 128) {
+      const W = [];
+      for (let i = 0; i < 16; i++) { let v = 0n; for (let j = 0; j < 8; j++) v = (v << 8n) | BigInt(m[o + 8 * i + j]); W.push(v); }
+      for (let i = 16; i < 80; i++) {
+        const s0 = rot(W[i - 15], 1) ^ rot(W[i - 15], 8) ^ (W[i - 15] >> 7n), s1 = rot(W[i - 2], 19) ^ rot(W[i - 2], 61) ^ (W[i - 2] >> 6n);
+        W.push((W[i - 16] + s0 + W[i - 7] + s1) & M);
+      }
+      let [a, b, c, d, e, f, g, h] = H;
+      for (let i = 0; i < 80; i++) {
+        const t1 = (h + (rot(e, 14) ^ rot(e, 18) ^ rot(e, 41)) + ((e & f) ^ (~e & M & g)) + K512[i] + W[i]) & M;
+        const t2 = ((rot(a, 28) ^ rot(a, 34) ^ rot(a, 39)) + ((a & b) ^ (a & c) ^ (b & c))) & M;
+        h = g; g = f; f = e; e = (d + t1) & M; d = c; c = b; b = a; a = (t1 + t2) & M;
+      }
+      [a, b, c, d, e, f, g, h].forEach((v, i) => { H[i] = (H[i] + v) & M; });
+    }
+    const out = new Uint8Array(32);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 8; j++) out[8 * i + j] = Number((H[i] >> BigInt(56 - 8 * j)) & 0xffn);
+    return out;
+  }
+
+  // BLAKE2b with any output length (RFC 7693), BigInt lanes; inputs here are tiny.
+  const B2IV = ['6a09e667f3bcc908', 'bb67ae8584caa73b', '3c6ef372fe94f82b', 'a54ff53a5f1d36f1', '510e527fade682d1', '9b05688c2b3e6c1f', '1f83d9abfb41bd6b', '5be0cd19137e2179'].map((x) => BigInt('0x' + x));
+  const SIGMA = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3], [11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4], [7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8], [9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13], [2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9], [12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11], [13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10], [6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5], [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0]];
+  function blake2b(msg, outlen) {
+    const M = (1n << 64n) - 1n, rot = (x, n) => ((x >> BigInt(n)) | (x << BigInt(64 - n))) & M;
+    const h = B2IV.slice(); h[0] ^= 0x01010000n ^ BigInt(outlen);
+    const blocks = Math.max(1, Math.ceil(msg.length / 128));
+    for (let bi = 0; bi < blocks; bi++) {
+      const last = bi === blocks - 1;
+      const blk = new Uint8Array(128); blk.set(msg.subarray(bi * 128, bi * 128 + 128));
+      const m = []; for (let i = 0; i < 16; i++) { let v = 0n; for (let j = 7; j >= 0; j--) v = (v << 8n) | BigInt(blk[8 * i + j]); m.push(v); }
+      const v = h.concat(B2IV);
+      const t = BigInt(last ? msg.length : (bi + 1) * 128);
+      v[12] ^= t & M; v[13] ^= t >> 64n; if (last) v[14] ^= M;
+      const G = (a, b, c, d, x, y) => {
+        v[a] = (v[a] + v[b] + x) & M; v[d] = rot(v[d] ^ v[a], 32); v[c] = (v[c] + v[d]) & M; v[b] = rot(v[b] ^ v[c], 24);
+        v[a] = (v[a] + v[b] + y) & M; v[d] = rot(v[d] ^ v[a], 16); v[c] = (v[c] + v[d]) & M; v[b] = rot(v[b] ^ v[c], 63);
+      };
+      for (let r = 0; r < 12; r++) {
+        const s = SIGMA[r % 10];
+        G(0, 4, 8, 12, m[s[0]], m[s[1]]); G(1, 5, 9, 13, m[s[2]], m[s[3]]); G(2, 6, 10, 14, m[s[4]], m[s[5]]); G(3, 7, 11, 15, m[s[6]], m[s[7]]);
+        G(0, 5, 10, 15, m[s[8]], m[s[9]]); G(1, 6, 11, 12, m[s[10]], m[s[11]]); G(2, 7, 8, 13, m[s[12]], m[s[13]]); G(3, 4, 9, 14, m[s[14]], m[s[15]]);
+      }
+      for (let i = 0; i < 8; i++) h[i] ^= v[i] ^ v[i + 8];
+    }
+    const out = new Uint8Array(outlen);
+    for (let i = 0; i < outlen; i++) out[i] = Number((h[i >> 3] >> BigInt(8 * (i & 7))) & 0xffn);
+    return out;
+  }
+
+  function crc32(b) { let c = ~0; for (const x of b) { c ^= x; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return (~c) >>> 0; }
+  function crc16xmodem(b) { let c = 0; for (const x of b) { c ^= x << 8; for (let k = 0; k < 8; k++) c = (c & 0x8000) ? ((c << 1) ^ 0x1021) & 0xffff : (c << 1) & 0xffff; } return c; }
+
+  // ---------------- encodings ----------------
+  const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function base58(bytes) {
+    let n = 0n; for (const b of bytes) n = (n << 8n) | BigInt(b);
+    let s = ''; while (n > 0n) { s = B58[Number(n % 58n)] + s; n /= 58n; }
+    for (const b of bytes) { if (b === 0) s = '1' + s; else break; }
+    return s;
+  }
+  const base58check = (payload) => base58(cat(payload, sha256(sha256(payload)).slice(0, 4)));
+  function base32(bytes, lower) {
+    const A = lower ? 'abcdefghijklmnopqrstuvwxyz234567' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let out = '', acc = 0, bits = 0;
+    for (const b of bytes) { acc = (acc << 8) | b; bits += 8; while (bits >= 5) { bits -= 5; out += A[(acc >>> bits) & 31]; } acc &= 0xff; }
+    if (bits) out += A[(acc << (5 - bits)) & 31];
+    return out;
+  }
+  const BECH = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  function polymod(v) { const G = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]; let c = 1; for (const x of v) { const t = c >>> 25; c = ((c & 0x1ffffff) << 5) ^ x; for (let i = 0; i < 5; i++) if ((t >>> i) & 1) c ^= G[i]; } return c >>> 0; }
+  function toWords(bytes) { const o = []; let a = 0, n = 0; for (const x of bytes) { a = ((a << 8) | x) & 0x1fff; n += 8; while (n >= 5) { n -= 5; o.push((a >>> n) & 31); } } if (n) o.push((a << (5 - n)) & 31); return o; }
+  function bech32(hrp, words, bech32m) {
+    const e = []; for (const c of hrp) e.push(c.charCodeAt(0) >>> 5); e.push(0); for (const c of hrp) e.push(c.charCodeAt(0) & 31);
+    const pm = (polymod([...e, ...words, 0, 0, 0, 0, 0, 0]) ^ (bech32m ? 0x2bc830a3 : 1)) >>> 0;
+    let s = hrp + '1'; for (const w of words) s += BECH[w]; for (let i = 0; i < 6; i++) s += BECH[(pm >>> (5 * (5 - i))) & 31];
+    return s;
+  }
+  const bech32Bytes = (hrp, bytes) => bech32(hrp, toWords(bytes));
+  // CashAddr (BCH, eCash) and Kaspa share this checksum; Kaspa uses its own version byte meaning.
+  function cashaddr(prefix, version, payload) {
+    const words = toWords(cat(Uint8Array.of(version), payload));
+    const G = [0x98f2bc8e61n, 0x79b76d99e2n, 0xf33e5fb3c4n, 0xae2eabe2a8n, 0x1e4f43e470n];
+    let c = 1n;
+    for (const d of [...[...prefix].map((ch) => ch.charCodeAt(0) & 31), 0, ...words, 0, 0, 0, 0, 0, 0, 0, 0]) {
+      const c0 = c >> 35n; c = ((c & 0x07ffffffffn) << 5n) ^ BigInt(d);
+      for (let i = 0; i < 5; i++) if ((c0 >> BigInt(i)) & 1n) c ^= G[i];
+    }
+    c ^= 1n;
+    let out = prefix + ':'; for (const w of words) out += BECH[w];
+    for (let i = 0; i < 8; i++) out += BECH[Number((c >> BigInt(5 * (7 - i))) & 31n)];
+    return out;
+  }
+  function eip55(a20) {
+    // keccak lives in decode.js; this module stays standalone by asking for it lazily.
+    const D = (typeof self !== 'undefined' && self.SeedDecode) || (typeof require === 'function' ? require('./decode.js') : null);
+    const low = hex(a20), hh = hex(D.keccak256(utf8(low)));
+    let out = '0x'; for (let i = 0; i < 40; i++) out += parseInt(hh[i], 16) >= 8 ? low[i].toUpperCase() : low[i];
+    return out;
+  }
+
+  // ---------------- address builders per record type ----------------
+  // ICP self-authenticating principals hash the DER SubjectPublicKeyInfo of the UNCOMPRESSED
+  // secp256k1 key (what ic-agent / dfx do). The record carries the compressed key, so expand it.
+  const ICP_DER_PREFIX = Uint8Array.from([0x30, 0x56, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x0a, 0x03, 0x42, 0x00]);
+  function secpUncompress(pub33) {
+    const P = (1n << 256n) - (1n << 32n) - 977n;
+    const pow = (b, e) => { let r = 1n; b %= P; while (e > 0n) { if (e & 1n) r = r * b % P; b = b * b % P; e >>= 1n; } return r; };
+    let x = 0n; for (const v of pub33.slice(1)) x = (x << 8n) | BigInt(v);
+    let y = pow((x * x % P * x + 7n) % P, (P + 1n) / 4n);          // p = 3 mod 4, so this is the square root
+    if ((y & 1n) !== BigInt(pub33[0] & 1)) y = P - y;
+    const out = new Uint8Array(65); out[0] = 4;
+    for (let i = 0; i < 32; i++) { out[32 - i] = Number((x >> BigInt(8 * i)) & 0xffn); out[64 - i] = Number((y >> BigInt(8 * i)) & 0xffn); }
+    return out;
+  }
+  const addr = {
+    p2sh: (ver, h) => base58check(cat(Uint8Array.of(...ver), h)),
+    taproot: (k) => bech32('bc', [1, ...toWords(k)], true),
+    filecoin: (h) => 'f1' + base32(cat(h, blake2b(cat(Uint8Array.of(0x01), h), 4)), true),
+    kaspa: (k) => cashaddr('kaspa', 0, k),
+    ergo: (pub) => { const b = cat(Uint8Array.of(0x01), pub); return base58(cat(b, blake2b(b, 32).slice(0, 4))); },
+    icpAccount: (pub) => {
+      const principal = cat(sha224(cat(ICP_DER_PREFIX, secpUncompress(pub))), Uint8Array.of(0x02));
+      const h = sha224(cat(Uint8Array.of(0x0a), utf8('account-id'), principal, new Uint8Array(32)));
+      const c = crc32(h);
+      return hex(cat(Uint8Array.of(c >>> 24, (c >>> 16) & 255, (c >>> 8) & 255, c & 255), h));
+    },
+    stellar: (pub) => { const b = cat(Uint8Array.of(6 << 3), pub); const c = crc16xmodem(b); return base32(cat(b, Uint8Array.of(c & 255, c >>> 8))); },
+    tezos: (h) => base58check(cat(Uint8Array.of(0x06, 0xa1, 0x9f), h)),
+    algorand: (pub) => base32(cat(pub, sha512_256(pub).slice(28))),
+    cardanoBase: (pay, stake) => bech32('addr', toWords(cat(Uint8Array.of(0x01), pay, stake))),
+    cardanoStake: (stake) => bech32('stake', toWords(cat(Uint8Array.of(0xe1), stake))),
+  };
+
+  // ---------------- per-type checks ----------------
+  // build(records, K) -> list of { name, addr, explorer, run, unavailable? } using the fetch
+  // helpers app.js passes in K (fetchJSON, rpc, firstOk, units, h, checkEvm, evm(key), ...).
+  const cz = (name, rest, denom, dec, symbol, price, explorer, extra) => Object.assign({ name, rest, denom, dec, symbol, price, explorer }, extra || {});
+  const COSMOS_BY_TYPE = {
+    0x30: [cz('Terra', 'https://rest.cosmos.directory/terra2', 'uluna', 6, 'LUNA', 'terra-luna-2', 'https://www.mintscan.io/terra/address/', { hrp: 'terra', rest2: 'https://terra-rest.publicnode.com' }),
+      cz('Terra Classic', 'https://terra-classic-lcd.publicnode.com', 'uluna', 6, 'LUNC', 'terra-luna', 'https://finder.terra-classic.hexxagon.io/mainnet/address/', { hrp: 'terra', rest2: 'https://rest.cosmos.directory/terra', stables: { uusd: ['USTC', 6, 'terrausd'] } })],
+    0x31: [cz('Kava', 'https://rest.cosmos.directory/kava', 'ukava', 6, 'KAVA', 'kava', 'https://www.mintscan.io/kava/address/', { hrp: 'kava', rest2: 'https://kava-rest.publicnode.com' })],
+    0x32: [cz('Secret', 'https://rest.lavenderfive.com:443/secretnetwork', 'uscrt', 6, 'SCRT', 'secret', 'https://www.mintscan.io/secret/address/', { hrp: 'secret', rest2: 'https://rest.cosmos.directory/secretnetwork' })],
+    0x33: [cz('Cronos POS (Crypto.org)', 'https://rest.cosmos.directory/cryptoorgchain', 'basecro', 8, 'CRO', 'crypto-com-chain', 'https://www.mintscan.io/crypto-org/address/', { hrp: 'cro' })],
+    0x34: [cz('Band', 'https://rest.cosmos.directory/bandchain', 'uband', 6, 'BAND', 'band-protocol', 'https://www.mintscan.io/band/address/', { hrp: 'band' })],
+    0x35: [cz('THORChain', 'https://rest.cosmos.directory/thorchain', 'rune', 8, 'RUNE', 'thorchain', 'https://runescan.io/address/', { hrp: 'thor' }),
+      cz('Maya', 'https://mayanode.mayachain.info', 'cacao', 10, 'CACAO', 'cacao', 'https://www.explorer.mayachain.info/address/', { hrp: 'maya' })],
+    0x36: [cz('BitSong', 'https://rest.cosmos.directory/bitsong', 'ubtsg', 6, 'BTSG', 'bitsong', 'https://ping.pub/bitsong/account/', { hrp: 'bitsong' })],
+    0x37: [cz('Desmos', 'https://rest.cosmos.directory/desmos', 'udsm', 6, 'DSM', 'desmos', 'https://ping.pub/desmos/account/', { hrp: 'desmos' })],
+    0x38: [cz('Persistence (old path)', 'https://rest.cosmos.directory/persistence', 'uxprt', 6, 'XPRT', 'persistence', 'https://www.mintscan.io/persistence/address/', { hrp: 'persistence' })],
+    0x39: [cz('Lum', 'https://rest.cosmos.directory/lumnetwork', 'ulum', 6, 'LUM', 'lum-network', 'https://ping.pub/lum/account/', { hrp: 'lum', unavailable: 'Lum Network has halted; no server answers' })],
+    0x3A: [cz('Provenance', 'https://rest.cosmos.directory/provenance', 'nhash', 9, 'HASH', 'hash-2', 'https://explorer.provenance.io/accounts/', { hrp: 'pb' })],
+    0x3B: [cz('Coreum (TX)', 'https://rest.cosmos.directory/coreum', 'ucore', 6, 'TX', 'tx', 'https://explorer.tx.org/tx/account/', { hrp: 'core' })],
+    0x3C: [cz('Agoric', 'https://rest.cosmos.directory/agoric', 'ubld', 6, 'BLD', 'agoric', 'https://agoric.explorers.guru/account/', { hrp: 'agoric' })],
+  };
+
+  function build(records, K) {
+    const { fetchJSON, rpc, firstOk, units, h } = K;
+    const one = (r) => ({ holdings: [r], others: 0, partial: null });
+    const post = (body) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const out = [];
+    const add = (name, a, explorer, run, extra) => out.push(Object.assign({ name, addr: a, explorer, run }, extra || {}));
+    const utxoMempool = (name, a, apis, symbol, price, explorer) => add(name, a, explorer, () => firstOk(apis, (b) => K.checkMempoolStyle(b, a, symbol, price)));
+
+    for (const { type, bytes: b } of records) {
+      switch (type) {
+        // ---- Bitcoin family ----
+        case 0x10: { const a = addr.p2sh([0x05], b); add('Bitcoin nested segwit (3...)', a, 'https://mempool.space/address/', () => K.checkBtc(a)); break; }
+        case 0x11: { const a = addr.taproot(b); add('Bitcoin taproot (bc1p)', a, 'https://mempool.space/address/', () => K.checkBtc(a)); break; }
+        case 0x12: { const a = addr.p2sh([0x30], b); add('Litecoin legacy (L...)', a, 'https://litecoinspace.org/address/', () => K.checkLtc(a)); break; }
+        case 0x13: { const a = addr.p2sh([0x32], b); add('Litecoin nested (M...)', a, 'https://litecoinspace.org/address/', () => K.checkLtc(a)); break; }
+        case 0x14: { const a = cashaddr('bitcoincash', 0, b); add('Bitcoin Cash (BCH wallets)', a, 'https://blockchair.com/bitcoin-cash/address/', () => K.checkBch(a)); break; }
+        case 0x15: { const a = addr.p2sh([0x00], b); add('Bitcoin SV (BSV wallets)', a, 'https://whatsonchain.com/address/', () => K.checkBsv(a)); break; }
+        case 0x16: { const a = cashaddr('ecash', 0, b); add('eCash (XEC wallets)', a, 'https://explorer.e.cash/address/', () => K.checkXecHash(hex(b))); break; }
+        case 0x17: { const a = addr.p2sh([0x4c], b);
+          add('Dash', a, 'https://insight.dash.org/insight/address/', () => firstOk(['blockcypher', '3xpl'], async (src) => {
+            if (src === 'blockcypher') { const j = await fetchJSON('https://api.blockcypher.com/v1/dash/main/addrs/' + a + '/balance'); return one(h('DASH', units(BigInt(j.final_balance), 8), 'dash')); }
+            const j = await fetchJSON('https://sandbox-api.3xpl.com/dash/address/' + a + '?data=balances');
+            if (!j.data || !j.data.balances) throw new Error('unexpected answer'); const v = (j.data.balances['dash-main'] || {}).dash; return one(h('DASH', units(BigInt(v ? v.balance : 0), 8), 'dash'));
+          })); break; }
+        case 0x18: { const a = addr.p2sh([0x1c, 0xb8], b);
+          add('Zcash (transparent)', a, 'https://mainnet.zcashexplorer.app/address/', () => firstOk(['3xpl', 'blockchair'], async (src) => {
+            if (src === '3xpl') { const j = await fetchJSON('https://sandbox-api.3xpl.com/zcash/address/' + a + '?data=balances'); if (!j.data || !j.data.balances) throw new Error('unexpected answer'); const v = (j.data.balances['zcash-main'] || {}).zcash; return one(h('ZEC', units(BigInt(v ? v.balance : 0), 8), 'zcash')); }
+            const j = await fetchJSON('https://api.blockchair.com/zcash/dashboards/address/' + a); const d = ((j.data || {})[a] || {}).address || {}; return one(h('ZEC', units(BigInt(d.balance || 0), 8), 'zcash'));
+          })); break; }
+        case 0x19: { const a = addr.p2sh([0x1e], b); utxoMempool('DigiByte', a, ['https://digiexplorer.info/api/address/'], 'DGB', 'digibyte', 'https://digiexplorer.info/address/'); break; }
+        case 0x1A: { const a = addr.p2sh([0x3c], b);
+          add('Ravencoin', a, 'https://blockbook.ravencoin.org/address/', async () => {
+            const j = await fetchJSON('https://blockbook.ravencoin.org/api/v2/address/' + a + '?details=basic');
+            if (j.balance === undefined) throw new Error('unexpected answer');
+            return one(h('RVN', units(BigInt(j.balance || 0) + BigInt(j.unconfirmedBalance || 0), 8), 'ravencoin'));
+          }); break; }
+        // ---- ETH-style coin types ----
+        case 0x20: case 0x21: case 0x22: case 0x25: {
+          const key = { 0x20: 'etc', 0x21: 'celo', 0x22: 'one', 0x25: 'kaia' }[type];
+          const label = { 0x20: 'Ethereum Classic (ETC wallets)', 0x21: 'Celo (Valora)', 0x22: 'Harmony (ONE wallets)', 0x25: 'Kaia (Kaikas)' }[type];
+          const c = K.evm(key); const a = eip55(b);
+          const shown = type === 0x22 ? bech32Bytes('one', b) : a;     // Harmony wallets show one1...
+          add(label, shown, c.explorer, () => K.checkEvm(c, a)); break;
+        }
+        case 0x23: { const a = eip55(b);
+          add('VeChain', a, 'https://vechainstats.com/account/', async () => {
+            const j = await firstOk(['https://mainnet.vechain.org', 'https://node-mainnet.vechain.energy'], (u) => fetchJSON(u + '/accounts/' + a));
+            return { holdings: [h('VET', units(BigInt(j.balance), 18), 'vechain'), h('VTHO', units(BigInt(j.energy), 18), 'vethor-token')], others: 0, partial: null };
+          }); break; }
+        case 0x24: { const a = eip55(b);
+          add('Theta', a, 'https://explorer.thetatoken.org/account/', async () => {
+            const j = await fetchJSON('https://theta-bridge-rpc.thetatoken.org/rpc', post({ jsonrpc: '2.0', id: 1, method: 'theta.GetAccount', params: [{ address: a }] }));
+            if (j.error) { if (/not found/i.test(j.error.message || '')) return { holdings: [h('THETA', 0, 'theta-token')], others: 0, partial: null }; throw new Error(j.error.message); }
+            const c = (j.result || {}).coins || {};
+            return { holdings: [h('THETA', units(BigInt(c.thetawei || 0), 18), 'theta-token'), h('TFUEL', units(BigInt(c.tfuelwei || 0), 18), 'theta-fuel')], others: 0, partial: null };
+          }); break; }
+        case 0x26: { const a = bech32Bytes('zil', b);
+          add('Zilliqa', a, 'https://viewblock.io/zilliqa/address/', async () => {
+            const j = await fetchJSON('https://api.zilliqa.com/', post({ id: '1', jsonrpc: '2.0', method: 'GetBalance', params: [hex(b)] }));
+            if (j.error) { if (/not created/i.test(j.error.message || '')) return one(h('ZIL', 0, 'zilliqa')); throw new Error(j.error.message); }
+            return one(h('ZIL', units(BigInt(j.result.balance), 12), 'zilliqa'));
+          }); break; }
+        case 0x27: { const a = 'hx' + hex(b);
+          add('ICON', a, 'https://tracker.icon.community/address/', async () => {
+            const j = await fetchJSON('https://ctz.solidwallet.io/api/v3', post({ jsonrpc: '2.0', id: 1, method: 'icx_getBalance', params: { address: a } }));
+            if (j.error) throw new Error(j.error.message);
+            return one(h('ICX', units(BigInt(j.result), 18), 'icon'));
+          }); break; }
+        case 0x28: { const a = addr.filecoin(b);
+          add('Filecoin (f1)', a, 'https://filfox.info/en/address/', async () => one(h('FIL', units(BigInt(await rpc('https://api.node.glif.io/rpc/v1', 'Filecoin.WalletBalance', [a])), 18), 'filecoin'))); break; }
+        case 0x29: { const a = addr.kaspa(b);
+          add('Kaspa', a, 'https://explorer.kaspa.org/addresses/', async () => { const j = await fetchJSON('https://api.kaspa.org/addresses/' + a + '/balance'); if (j.balance === undefined) throw new Error('unexpected answer'); return one(h('KAS', units(BigInt(j.balance || 0), 8), 'kaspa')); }); break; }
+        case 0x2A: { const a = addr.ergo(b);
+          add('Ergo', a, 'https://explorer.ergoplatform.com/en/addresses/', async () => {
+            const j = await fetchJSON('https://api.ergoplatform.com/api/v1/addresses/' + a + '/balance/confirmed');
+            return { holdings: [h('ERG', units(BigInt(j.nanoErgs || 0), 9), 'ergo')], others: (j.tokens || []).length, partial: null };
+          }); break; }
+        case 0x2B: { const a = addr.icpAccount(b);
+          add('Internet Computer', a, 'https://dashboard.internetcomputer.org/account/', async () => {
+            const j = await fetchJSON('https://ledger-api.internetcomputer.org/accounts/' + a);
+            if (j.balance === undefined) throw new Error('unexpected answer');
+            return one(h('ICP', units(BigInt(j.balance || 0), 8), 'internet-computer'));
+          }); break; }
+        case 0x2C: { const a = bech32Bytes('avax', b);
+          add('Avalanche P-chain', 'P-' + a, 'https://subnets.avax.network/p-chain/address/', async () => {
+            const j = await fetchJSON('https://api.avax.network/ext/bc/P', post({ jsonrpc: '2.0', id: 1, method: 'platform.getBalance', params: { addresses: ['P-' + a] } }));
+            if (j.error) throw new Error(j.error.message);
+            return one(h('AVAX', units(BigInt(j.result.balance || 0), 9), 'avalanche-2'));
+          });
+          add('Avalanche X-chain', 'X-' + a, 'https://subnets.avax.network/x-chain/address/', async () => {
+            const j = await fetchJSON('https://glacier-api.avax.network/v1/networks/mainnet/blockchains/x-chain/balances?addresses=' + a);
+            let n = 0n; for (const x of ((j.balances || {}).unlocked || [])) if (x.symbol === 'AVAX') n += BigInt(x.amount || 0);
+            return one(h('AVAX', units(n, 9), 'avalanche-2'));
+          }); break; }
+        // ---- Cosmos with their own coin type ----
+        case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: case 0x36: case 0x37: case 0x38: case 0x39: case 0x3A: case 0x3B: case 0x3C:
+          for (const c of COSMOS_BY_TYPE[type]) { const a = bech32Bytes(c.hrp, b); add(c.name, a, c.explorer, () => K.checkCosmos(c, a), { unavailable: c.unavailable }); }
+          break;
+        // ---- ed25519 ----
+        case 0x50: case 0x51: { const a = base58(b);
+          add(type === 0x50 ? 'Solana (Ledger, Trust path)' : 'Solana (old Solflare path)', a, 'https://solscan.io/account/', () => K.checkSol(a)); break; }
+        case 0x52: { const a = addr.stellar(b);
+          add('Stellar', a, 'https://stellar.expert/explorer/public/account/', async () => {
+            try {
+              const j = await firstOk(['https://horizon.stellar.org', 'https://horizon.stellar.lobstr.co'], (u) => fetchJSON(u + '/accounts/' + a));
+              const hs = []; let others = 0;
+              for (const x of j.balances || []) {
+                if (x.asset_type === 'native') hs.unshift(h('XLM', Number(x.balance), 'stellar'));
+                else if (x.asset_code === 'USDC' && x.asset_issuer === 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN') hs.push(h('USDC', Number(x.balance), 'usd-coin'));
+                else if (Number(x.balance) > 0) others++;
+              }
+              return { holdings: hs.length ? hs : [h('XLM', 0, 'stellar')], others, partial: null };
+            } catch (e) { if (e.status === 404) return one(h('XLM', 0, 'stellar')); throw e; }   // account never funded
+          }); break; }
+        case 0x53: { const a = addr.tezos(b);
+          add('Tezos', a, 'https://tzkt.io/', async () => one(h('XTZ', units(BigInt(await K.fetchText('https://api.tzkt.io/v1/accounts/' + a + '/balance')), 6), 'tezos'))); break; }
+        case 0x54: { const a = hex(b);
+          add('NEAR', a, 'https://nearblocks.io/address/', async () => {
+            const r = await firstOk(['https://rpc.fastnear.com', 'https://rpc.mainnet.near.org'], async (u) => {
+              const j = await fetchJSON(u, post({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'view_account', finality: 'final', account_id: a } }));
+              if (j.error) { if ((j.error.cause && j.error.cause.name) === 'UNKNOWN_ACCOUNT') return { amount: '0' }; throw new Error((j.error.cause && j.error.cause.name) || j.error.message); }   // UNKNOWN_ACCOUNT: implicit account never funded
+              return j.result;
+            });
+            return one(h('NEAR', units(BigInt(r.amount), 24), 'near'));
+          }); break; }
+        case 0x55: { const a = addr.algorand(b);
+          add('Algorand', a, 'https://allo.info/account/', async () => {
+            const j = await fetchJSON('https://mainnet-api.algonode.cloud/v2/accounts/' + a);
+            const hs = [h('ALGO', units(BigInt(j.amount || 0), 6), 'algorand')]; let others = 0;
+            for (const x of j.assets || []) { if (x['asset-id'] === 31566704) hs.push(h('USDC', units(BigInt(x.amount), 6), 'usd-coin')); else if (x['asset-id'] === 312769) hs.push(h('USDT', units(BigInt(x.amount), 6), 'tether')); else if (x.amount > 0) others++; }
+            return { holdings: hs, others, partial: null };
+          }); break; }
+        case 0x56: { const a = bech32Bytes('erd', b);
+          add('MultiversX', a, 'https://explorer.multiversx.com/accounts/', async () => { const j = await fetchJSON('https://api.multiversx.com/accounts/' + a); if (j.balance === undefined) throw new Error('unexpected answer'); return one(h('EGLD', units(BigInt(j.balance || 0), 18), 'elrond-erd-2')); }); break; }
+        case 0x57: { const pk = hex(b);
+          add('Hedera', pk, 'https://hashscan.io/mainnet/account/', async () => {
+            const j = await fetchJSON('https://mainnet-public.mirrornode.hedera.com/api/v1/accounts?account.publickey=' + pk + '&balance=true&limit=25');
+            if (!Array.isArray(j.accounts)) throw new Error('unexpected answer');
+            let n = 0n; for (const x of j.accounts) n += BigInt(((x.balance || {}).balance) || 0);
+            return one(h('HBAR', units(n, 8), 'hedera-hashgraph'));
+          }, { explorerAddr: null }); break; }   // Hedera account ids are assigned on chain; there is no address to link
+        case 0x58: { const a = '0x' + hex(b);
+          add('IOTA', a, 'https://iotascan.com/mainnet/account/', async () => one(h('IOTA', units(BigInt((await rpc('https://api.mainnet.iota.cafe', 'iotax_getBalance', [a])).totalBalance), 9), 'iota'))); break; }
+        case 0x59: { const pk = hex(b);
+          add('TON (Trust Wallet path)', pk, 'https://tonviewer.com/', async () => {
+            const j = await fetchJSON('https://tonapi.io/v2/pubkeys/' + pk + '/wallets');
+            if (!Array.isArray(j.accounts)) throw new Error('unexpected answer');
+            let n = 0n; for (const x of j.accounts) n += BigInt(x.balance || 0);
+            // The index only knows wallets that have sent at least once (deployed contracts), so
+            // an empty answer is not proof of nothing: say so instead of claiming zero.
+            return { holdings: [h('TON', units(n, 9), 'the-open-network')], others: 0, partial: j.accounts.length ? null : 'a TON wallet that has only ever received may not show up here' };
+          }); break; }
+        case 0x60: { const pay = b.slice(0, 28), stake = b.slice(28, 56); const base = addr.cardanoBase(pay, stake), st = addr.cardanoStake(stake);
+          add('Cardano', base, 'https://cardanoscan.io/stakekey/', async () => {
+            return firstOk(['koios', 'yoroi'], async (src) => {
+              if (src === 'koios') {
+                const j = await fetchJSON('https://graph.xray.app/output/services/koios/mainnet/api/v1/account_info', post({ _stake_addresses: [st] }));
+                if (!Array.isArray(j)) throw new Error('unexpected answer');
+                return one(h('ADA', units(BigInt((j[0] || {}).total_balance || 0), 6), 'cardano'));   // [] = stake key never seen on chain
+              }
+              const j = await fetchJSON('https://api.yoroiwallet.com/api/txs/utxoSumForAddresses', post({ addresses: [base] }));
+              return { holdings: [h('ADA', units(BigInt(j.sum || 0), 6), 'cardano')], others: 0, partial: 'first address only' };
+            });
+          }, { explorerAddr: st }); break; }
+        default: break;   // a newer device's record type; skipped by design
+      }
+    }
+    return out;
+  }
+
+  // Every price id this module can ask for, so the page always requests the full set and the
+  // request says nothing about which coins a wallet holds.
+  const PRICE_IDS = ['bitcoin', 'litecoin', 'bitcoin-cash', 'bitcoin-cash-sv', 'ecash', 'dash', 'zcash', 'digibyte', 'ravencoin', 'ethereum-classic', 'celo', 'harmony', 'kaia', 'vechain', 'vethor-token', 'theta-token', 'theta-fuel', 'zilliqa', 'icon', 'filecoin', 'kaspa', 'ergo', 'internet-computer', 'avalanche-2', 'terra-luna-2', 'terra-luna', 'terrausd', 'kava', 'secret', 'crypto-com-chain', 'band-protocol', 'thorchain', 'cacao', 'bitsong', 'desmos', 'persistence', 'hash-2', 'tx', 'agoric', 'solana', 'stellar', 'tezos', 'near', 'algorand', 'elrond-erd-2', 'hedera-hashgraph', 'iota', 'the-open-network', 'cardano', 'usd-coin', 'tether'];
+
+  return { build, PRICE_IDS, addr, cashaddr, base58, base58check, base32, bech32, toWords, sha256, sha224, sha512_256, blake2b, crc32, crc16xmodem, hex };
+});

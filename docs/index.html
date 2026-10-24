@@ -273,6 +273,19 @@
   .casefile li.expanded .addr.short { display: none; }
   .note { color: var(--text-dim); font-size: 15px; margin: 14px 0 0; }
   .nothing { margin-top: 6px; }
+  .more { padding: 8px 0 6px; }
+  .more h3 {
+    font-family: var(--display); font-weight: 400; font-size: 24px; letter-spacing: 0.02em;
+    text-transform: uppercase; margin: 0 0 8px; padding-bottom: 8px; border-bottom: 2px solid var(--gold);
+  }
+  .more p { margin: 0 0 12px; color: var(--text-dim); font-size: 15px; }
+  .btn {
+    font: inherit; font-weight: 600; font-size: 16px; color: var(--ink); background: var(--gold);
+    border: 0; border-radius: 6px; padding: 12px 18px; min-height: 44px; cursor: pointer;
+  }
+  .btn.quiet { background: transparent; color: var(--text); border: 1px solid var(--rule); }
+  .btn:focus-visible { outline: 3px solid var(--paper); outline-offset: 3px; }
+  #more-video { display: block; width: 100%; max-width: 420px; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #000; margin: 4px 0 10px; }
   .nothing summary {
     cursor: pointer;
     padding: 12px 0;
@@ -349,6 +362,17 @@
     <p class="fine" id="verdict-fine"></p>
   </section>
 
+  <section id="more" class="more" hidden>
+    <h3>More chains</h3>
+    <p id="more-text">The Portfolio QR only fits the main keys. On the SeedBox, turn the knob while the Portfolio QR is showing: a moving QR appears. Tap below and hold your phone up to it for a few seconds to add about 50 more networks, including Cardano, Stellar, Tezos, NEAR, Algorand, TON, Avalanche P/X, Terra, THORChain, Kaspa, Dash and Zcash.</p>
+    <button type="button" id="more-start" class="btn">Scan the moving QR</button>
+    <div id="more-cam" hidden>
+      <video id="more-video" playsinline muted></video>
+      <p id="more-status" aria-live="polite"></p>
+      <button type="button" id="more-stop" class="btn quiet">Cancel</button>
+    </div>
+  </section>
+
   <section id="casefile" class="casefile" hidden>
     <h3>Case file</h3>
     <ul id="rows"></ul>
@@ -379,6 +403,8 @@
 <canvas id="confetti" aria-hidden="true"></canvas>
 <script src="decode.js"></script>
 <script src="ata.js"></script>
+<script src="scan.js"></script>
+<script src="extra.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
