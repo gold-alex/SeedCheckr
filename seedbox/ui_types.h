@@ -14,3 +14,11 @@ enum Ev {
 // runMenu() return codes besides a selected index (>= 0)
 #define MENU_BACK    (-1)   // long press
 #define MENU_TIMEOUT (-2)   // idle timeout (secret wiped)
+
+// Word entry screen geometry (seedbox.ino). Lives here because the Arduino
+// preprocessor puts its generated prototypes above anything defined in the .ino.
+struct WordScreen {
+  int listY, lines, cols, cellW, cpl, perPage;   // word area
+  int keyY, keyW, keyH;                          // letter keys, 3 rows
+  int ctlW;                                      // the 3 word controls on the 4th row
+};

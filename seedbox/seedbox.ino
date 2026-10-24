@@ -43,7 +43,7 @@
 #define ENC_SW     3
 
 // ---------------- Tunables ----------------
-#define ENC_REVERSE    0                        // 1 if the knob scrolls the wrong way
+#define ENC_REVERSE    1                        // flip if the knob scrolls the wrong way (1 matches the reference board)
 #define LONG_PRESS_MS  800
 #define IDLE_WIPE_MS   (5UL * 60UL * 1000UL)    // forget addresses after 5 min of no input
 // Where the Portfolio QR points. The page lives in docs/ in the repo; host it anywhere
@@ -155,13 +155,18 @@ static bool isBack(Ev e) { return e == EV_LONG || e == EV_TIMEOUT; }
 // ---------------- Drawing helpers ----------------
 static void clearScreen() { tft.fillScreen(C_BG); }
 
-static void drawTitle(const char* t) {
-  tft.fillRect(0, 0, SCR_W, 11, C_DIM);
+// Grey bar across the top. s = text size (1 = 8 px glyphs, 2 = 16 px).
+static void drawTitle(const char* t, int s) {
+  tft.fillRect(0, 0, SCR_W, 8 * s + 3, C_DIM);
+  tft.setTextSize(s);
   tft.setTextColor(ST77XX_BLACK);
   tft.setCursor(2, 2);
   tft.print(t);
+  tft.setTextSize(1);
   tft.setTextColor(C_FG);
 }
+
+static void drawTitle(const char* t) { drawTitle(t, 1); }
 
 static void textAt(int x, int y, const char* s, uint16_t color) {
   tft.setTextColor(color);
@@ -196,42 +201,47 @@ static void message(const char* l1, const char* l2, const char* l3, uint16_t col
   }
 }
 
-// One row of a list: blank it, then the item if there is one.
-static void menuRow(const char* const* items, int n, int top, int sel, int i) {
-  int y = 14 + i * 9;
-  tft.fillRect(0, y, SCR_W - 4, 9, C_BG);
+// One row of a list: the item on a yellow bar when it is the cursor, on black
+// otherwise, and a blank row past the end of the list. s = text size.
+static void menuRow(const char* const* items, int n, int top, int sel, int i, int s) {
+  int rowH = 9 * s, y = 8 * s + 6 + i * rowH;
+  bool cur = (top + i < n) && (top + i == sel);
+  tft.fillRect(0, y, SCR_W - 4, rowH, cur ? C_HI : C_BG);
   if (top + i >= n) return;
-  bool cur = (top + i == sel);
-  tft.setCursor(2, y);
-  tft.setTextColor(cur ? C_HI : C_FG);
-  tft.print(cur ? "> " : "  ");
+  tft.setTextSize(s);
+  tft.setTextColor(cur ? ST77XX_BLACK : C_FG);
+  tft.setCursor(2 * s, y + (rowH - 8 * s) / 2);
   tft.print(items[top + i]);
+  tft.setTextSize(1);
+  tft.setTextColor(C_FG);
 }
 
 // Scrollable list. Knob moves, press selects. Returns index, MENU_BACK or MENU_TIMEOUT.
-// Never clears the screen: every row is painted over whatever was there, and a knob
-// turn repaints only the two rows that changed, so nothing flashes.
-static int runMenu(const char* t, const char* const* items, int n, int sel) {
-  const int VIS = (SCR_H - 14) / 9;
+// s = text size: 1 for long lists, 2 for the main menu (12 px wide glyphs, so 12
+// characters fit a 160 px screen). Never clears the screen: every row is painted
+// over whatever was there, and a knob turn repaints only the two rows that changed.
+static int runMenu(const char* t, const char* const* items, int n, int sel, int s) {
+  const int rowH = 9 * s, y0 = 8 * s + 6;         // rows start 3 px under the title bar
+  const int VIS = (SCR_H - y0) / rowH;
   int top = 0, prevTop = -1, prevSel = -1;
   if (sel < 0 || sel >= n) sel = 0;
-  drawTitle(t);
-  tft.fillRect(0, 11, SCR_W, 3, C_BG);                                  // gap under the title
-  tft.fillRect(0, 14 + VIS * 9, SCR_W, SCR_H - 14 - VIS * 9, C_BG);     // strip under the last row
+  drawTitle(t, s);
+  tft.fillRect(0, y0 - 3, SCR_W, 3, C_BG);                                  // gap under the title
+  tft.fillRect(0, y0 + VIS * rowH, SCR_W, SCR_H - y0 - VIS * rowH, C_BG);   // strip under the last row
   for (;;) {
     if (sel < top) top = sel;
     if (sel >= top + VIS) top = sel - VIS + 1;
     if (top != prevTop) {                       // first draw, or the list scrolled
-      for (int i = 0; i < VIS; i++) menuRow(items, n, top, sel, i);
-      tft.fillRect(SCR_W - 4, 14, 4, SCR_H - 14, C_BG);
+      for (int i = 0; i < VIS; i++) menuRow(items, n, top, sel, i, s);
+      tft.fillRect(SCR_W - 4, y0, 4, SCR_H - y0, C_BG);
       if (n > VIS) {   // scrollbar
-        int h = (SCR_H - 14) * VIS / n; if (h < 4) h = 4;
-        int y = 14 + (SCR_H - 14 - h) * top / (n - VIS);
+        int h = (SCR_H - y0) * VIS / n; if (h < 4) h = 4;
+        int y = y0 + (SCR_H - y0 - h) * top / (n - VIS);
         tft.fillRect(SCR_W - 3, y, 2, h, C_DIM);
       }
     } else if (sel != prevSel) {                // cursor moved within the visible rows
-      menuRow(items, n, top, sel, prevSel - top);
-      menuRow(items, n, top, sel, sel - top);
+      menuRow(items, n, top, sel, prevSel - top, s);
+      menuRow(items, n, top, sel, sel - top, s);
     }
     prevTop = top; prevSel = sel;
     Ev e = waitEvent();
@@ -373,7 +383,7 @@ static void browseAddresses() {
   items[n + 1] = "Wipe & exit";
   int sel = 0;
   while (gLoaded) {
-    sel = runMenu("Addresses", items, n + 2, sel);
+    sel = runMenu("Addresses", items, n + 2, sel, 1);
     if (sel == MENU_BACK) { sel = n + 1; continue; }    // hold just jumps to "Wipe & exit"
     if (sel < 0 || sel == n + 1) break;
     if (sel == 0) { showPortfolio(); continue; }
@@ -424,91 +434,301 @@ static bool deriveFromEntered(int nwords) {
   return true;
 }
 
-// ---------------- Review before derive ----------------
-// Shows every entered word. Returns 1 = derive, 0 = go back and fix the last word, -1 = aborted.
-static int reviewWords(int nwords) {
-  clearScreen();
-  // "24mushroom" is 10 chars = 60 px, so 2 columns fit both landscape (160) and portrait (128)
-  drawTitle(SCR_W >= 150 ? "Check  press:go  hold:fix" : "press:go  hold:fix");
-  int cols = SCR_W / 62; if (cols < 1) cols = 1; if (cols > 3) cols = 3;
-  int rows = (nwords + cols - 1) / cols;
-  int rh = (SCR_H - 14) / rows; if (rh > 12) rh = 12;
-  for (int i = 0; i < nwords; i++) {
-    int c = i / rows, r = i % rows;
-    tft.setCursor(2 + c * 62, 14 + r * rh);
-    tft.setTextColor(C_DIM);
-    if (i + 1 < 10) tft.print(' ');
+// ---------------- Phrase overview ----------------
+// Every slot of the phrase on one screen, two columns. Turn moves over the words
+// that are in (plus the next empty slot), press edits that word, hold goes back.
+// Once every slot is filled an extra item sits above word 1, drawn in the title
+// bar: derive. Nothing here clears the screen; each cell paints its own background.
+#define PS_DERIVE  (-1)
+#define PS_BACK    (-2)
+#define PS_TIMEOUT (-3)
+
+// Returns a slot index to edit, PS_DERIVE, PS_BACK or PS_TIMEOUT.
+static int phraseScreen(int nwords, int filled, int cur) {
+  const bool full = (filled == nwords);
+  const int cols = 2, rows = (nwords + cols - 1) / cols;
+  const int cellW = (SCR_W - 4) / cols, cpl = cellW / 6;      // 13 / 10 chars per cell
+  int rh = (SCR_H - 14) / rows; if (rh > 12) rh = 12;         // 12 px rows for 12 words, 9 for 24
+  const int lo = full ? PS_DERIVE : 0, hi = full ? nwords - 1 : filled;
+  if (cur < lo) cur = lo;
+  if (cur > hi) cur = hi;
+
+  // number (black on yellow when it is the cursor), then the word or "----"
+  auto cell = [&](int i, bool sel) {
+    int x = 2 + (i / rows) * cellW, y = 14 + (i % rows) * rh, pad = (rh - 8) / 2;
+    tft.setCursor(x, y + pad);
+    tft.setTextColor(sel ? ST77XX_BLACK : C_DIM, sel ? C_HI : C_BG);
+    if (i + 1 < 10) tft.write(' ');
     tft.print(i + 1);
-    tft.setTextColor(C_HI);
-    tft.print(WORDS[gIdx[i]]);
-  }
+    int n = 2;
+    const char* w = (i < filled) ? WORDS[gIdx[i]] : "----";
+    tft.setTextColor(sel ? C_HI : (i < filled ? C_FG : C_DIM), C_BG);
+    if (cpl >= 12) { tft.write(' '); n++; }
+    for (; *w && n < cpl; w++, n++) tft.write(*w);
+    for (; n < cpl; n++) tft.write(' ');
+    tft.setTextColor(C_FG);
+    tft.fillRect(x + cpl * 6, y, cellW - cpl * 6, rh, C_BG);    // pixels no character covers
+    tft.fillRect(x, y, cellW, pad, C_BG);
+    tft.fillRect(x, y + pad + 8, cellW, rh - pad - 8, C_BG);
+  };
+  auto title = [&](int c) {
+    if (c == PS_DERIVE) {
+      tft.fillRect(0, 0, SCR_W, 11, C_HI);
+      textAt(2, 2, "> Derive addresses", ST77XX_BLACK);
+    } else drawTitle(c < filled ? "press: edit   hold: back" : "press: type   hold: back");
+  };
+
+  // frame: the strips no cell covers, then every cell
+  tft.fillRect(0, 11, SCR_W, 3, C_BG);
+  tft.fillRect(0, 14, 2, rows * rh, C_BG);
+  tft.fillRect(2 + cols * cellW, 14, SCR_W - 2 - cols * cellW, rows * rh, C_BG);
+  tft.fillRect(0, 14 + rows * rh, SCR_W, SCR_H - 14 - rows * rh, C_BG);
+  for (int i = 0; i < nwords; i++) cell(i, i == cur);
+
+  int prev = cur, shown = -9;
   for (;;) {
+    int kind = (cur == PS_DERIVE) ? 0 : (cur < filled ? 1 : 2);
+    if (kind != shown) { title(cur); shown = kind; }
+    if (prev != cur) {
+      if (prev >= 0) cell(prev, false);
+      if (cur >= 0) cell(cur, true);
+    }
+    prev = cur;
     Ev e = waitEvent();
-    if (e == EV_PRESS) return 1;
-    if (e == EV_LONG) return 0;
-    if (e == EV_TIMEOUT) return -1;   // words already wiped
+    if (e == EV_CW)        cur = (cur == hi) ? lo : cur + 1;
+    else if (e == EV_CCW)  cur = (cur == lo) ? hi : cur - 1;
+    else if (e == EV_PRESS) return cur;
+    else if (e == EV_LONG)  return PS_BACK;
+    else if (e == EV_TIMEOUT) return PS_TIMEOUT;
   }
 }
 
 // ---------------- Seed entry ----------------
-// Pick letters until the candidate list is short, then pick the word.
-// Long press = backspace (or back one word, or cancel).
-// Fills gIdx[startWord..nwords-1]; returns true when all words are in and the checksum passes.
-static bool enterWords(int nwords, int startWord) {
-  char prefix[6] = "";
-  int plen = 0, w = startWord;
-  static char ibuf[26][10];
-  static const char* items[26];
-  char t[40];
-  while (w < nwords) {
-    uint16_t cand[16];
-    int total = 0;
-    int nc = bip39_prefix(prefix, cand, 16, &total);
-    int n = 0;
-    bool pickingWord = (total <= 16);
-    if (pickingWord) {
-      for (int i = 0; i < nc; i++) { strncpy(ibuf[n], WORDS[cand[i]], 9); ibuf[n][9] = 0; items[n] = ibuf[n]; n++; }
-    } else {
-      for (char c = 'a'; c <= 'z'; c++) {
-        char p2[7]; snprintf(p2, sizeof p2, "%s%c", prefix, c);
-        int tt = 0; bip39_prefix(p2, nullptr, 0, &tt);
-        if (tt) { ibuf[n][0] = c; ibuf[n][1] = 0; items[n] = ibuf[n]; n++; }
-      }
-    }
-    snprintf(t, sizeof t, "Word %d/%d:  %s_", w + 1, nwords, prefix);
-    int sel = runMenu(t, items, n, 0);
-    if (sel == MENU_TIMEOUT) { clearScreen(); return false; }
-    if (sel == MENU_BACK) {
-      if (plen > 0) prefix[--plen] = 0;
-      else if (w > 0) { w--; gIdx[w] = 0; }
-      else { wipeSecret(); clearScreen(); return false; }
-      continue;
-    }
-    if (pickingWord) { gIdx[w++] = cand[sel]; plen = 0; prefix[0] = 0; }
-    else if (plen < 5) { prefix[plen++] = items[sel][0]; prefix[plen] = 0; }
+// One screen per word. What has been typed so far sits big and yellow at the top,
+// the words that match it fill the middle, a letter keyboard sits under them, and
+// a row of word controls under that. One knob
+// cursor runs through the words, then the keys, then the controls. Press a word to
+// take it, a letter to narrow the list, the arrow to delete a letter (or step back
+// a word when nothing is typed, or quit on the first word). Holding the knob jumps
+// between the list and the keyboard, so a long list never has to be scrolled through.
+// "< prev" and "next >" move between words without retyping them, "see all" shows
+// the whole phrase.
+#define KEY_COLS 9
+#define KEY_DEL  26
+#define KEY_PREV 27
+#define KEY_ALL  28
+#define KEY_NEXT 29
+#define NKEYS    30                  // a-z, delete, and the 3 word controls
+#define WS_DEL     (-1)
+#define WS_PREV    (-2)
+#define WS_NEXT    (-3)
+#define WS_ALL     (-4)
+#define WS_TIMEOUT (-5)
+#define WS_LETTER  0x1000            // return value: WS_LETTER | 'x'
+
+static void wsGeometry(WordScreen& g) {
+  g.keyH = 12;
+  g.keyY = SCR_H - 4 * g.keyH;                   // 80 landscape, 112 portrait: 3 letter rows + controls
+  g.keyW = (SCR_W - 2) / KEY_COLS;               // 17 / 14
+  g.ctlW = (SCR_W - 2) / 3;                      // 52 / 42
+  g.listY = 22;                                  // under the top strip (wsDrawTop)
+  g.lines = (g.keyY - 3 - g.listY) / 10;         // 5 / 8
+  g.cols = 2;
+  g.cellW = (SCR_W - 4) / g.cols;                // 78 / 62
+  g.cpl = g.cellW / 6;                           // 13 / 10 chars, marker included
+  g.perPage = g.lines * g.cols;                  // 10 / 16
+}
+
+// Top strip: "Word" and "n/N" small on the left, what is being typed in double-size
+// yellow beside them with an underscore cursor. With nothing typed, the word the
+// slot already holds in grey, or just the cursor. Painted in place, no clear.
+static void wsDrawTop(const WordScreen& g, int w, int nwords, int filled, const char* prefix) {
+  char num[8]; snprintf(num, sizeof num, "%d/%d", w + 1, nwords);
+  lineAt(2, 2, "Word", C_FG, 5);
+  lineAt(2, 12, num, C_FG, 5);
+  const int bx = 34, bw = 8 * 12;                // 8 glyphs of 12 px: the longest BIP39 word
+  char big[10];
+  uint16_t color = C_HI;
+  if (prefix[0]) snprintf(big, sizeof big, "%s_", prefix);
+  else if (w < filled) { snprintf(big, sizeof big, "%s", WORDS[gIdx[w]]); color = C_DIM; }
+  else snprintf(big, sizeof big, "_");
+  tft.setTextSize(2);
+  tft.setTextColor(color, C_BG);
+  tft.setCursor(bx, 2);
+  int n = 0;
+  for (; big[n] && n < 8; n++) tft.write(big[n]);
+  for (; n < 8; n++) tft.write(' ');
+  tft.setTextSize(1);
+  tft.setTextColor(C_FG);
+  // the pixels no glyph covers
+  tft.fillRect(0, 0, SCR_W, 2, C_BG);
+  tft.fillRect(0, 2, 2, g.listY - 2, C_BG);
+  tft.fillRect(2, 10, bx - 2, 2, C_BG);
+  tft.fillRect(2, 20, bx - 2, g.listY - 20, C_BG);
+  tft.fillRect(2 + 5 * 6, 2, bx - 2 - 5 * 6, 18, C_BG);   // between the small lines and the big one
+  tft.fillRect(bx, 18, SCR_W - bx, g.listY - 18, C_BG);
+  if (SCR_W > bx + bw) tft.fillRect(bx + bw, 2, SCR_W - bx - bw, 16, C_BG);
+}
+
+// One word cell: marker, word, padding; the 2 px under it is cleared too so the
+// cell fully covers whatever screen was here before. No clear, no flash.
+static void wsDrawWord(const WordScreen& g, int first, int total, int page, int k, bool cur) {
+  int idx = page * g.perPage + k;
+  int x = 2 + (k / g.lines) * g.cellW, y = g.listY + (k % g.lines) * 10;
+  const char* w = (idx < total) ? WORDS[first + idx] : "";
+  tft.setTextColor(cur ? C_HI : C_FG, C_BG);
+  tft.setCursor(x, y);
+  tft.write(cur ? '>' : ' ');
+  int n = 1;
+  for (; *w && n < g.cpl; w++, n++) tft.write(*w);
+  for (; n < g.cpl; n++) tft.write(' ');
+  tft.setTextColor(C_FG);
+  tft.fillRect(x + g.cpl * 6, y, g.cellW - g.cpl * 6, 10, C_BG);   // leftover width, if any
+  tft.fillRect(x, y + 8, g.cellW, 2, C_BG);
+}
+
+// A letter key, the delete key, or one of the three word controls on the bottom row.
+static void wsDrawKey(const WordScreen& g, int k, bool enabled, bool cur) {
+  int x, y, w;
+  char one[2] = { (char)('a' + k), 0 };
+  const char* label = one;
+  if (k < KEY_PREV) {
+    x = 1 + (k % KEY_COLS) * g.keyW; y = g.keyY + (k / KEY_COLS) * g.keyH; w = g.keyW;
+    if (k == KEY_DEL) one[0] = '\x1B';           // 0x1B is the left arrow in the built-in font
+  } else {
+    x = 1 + (k - KEY_PREV) * g.ctlW; y = g.keyY + 3 * g.keyH; w = g.ctlW;
+    label = (k == KEY_PREV) ? "< prev" : (k == KEY_ALL) ? "see all" : "next >";
   }
+  tft.fillRect(x, y, w, g.keyH, cur ? C_HI : C_BG);
+  tft.setTextColor(cur ? ST77XX_BLACK : (enabled ? C_FG : C_DIM));
+  tft.setCursor(x + (w - 6 * (int)strlen(label)) / 2, y + 2);
+  tft.print(label);
+  tft.setTextColor(C_FG);
+}
+
+// Word w of nwords; slots 0..filled-1 already hold a word. Returns a word index,
+// WS_LETTER | letter, or one of the WS_ codes.
+static int wordScreen(int w, int nwords, int filled, const char* prefix) {
+  WordScreen g; wsGeometry(g);
+  uint16_t f1[1]; int total = 0;
+  int first = bip39_prefix(prefix, f1, 1, &total) ? f1[0] : 0;   // matches are contiguous in the sorted list
+  bool keyOk[NKEYS];
+  for (int k = 0; k < 26; k++) {
+    char p2[10]; snprintf(p2, sizeof p2, "%s%c", prefix, 'a' + k);
+    int tt = 0; bip39_prefix(p2, nullptr, 0, &tt);
+    keyOk[k] = tt > 0;
+  }
+  keyOk[KEY_DEL]  = true;
+  keyOk[KEY_PREV] = w > 0;
+  keyOk[KEY_ALL]  = true;
+  keyOk[KEY_NEXT] = w < filled;                  // only past a slot that already has a word
+  const int nItems = total + NKEYS;
+  auto enabled = [&](int c) { return c < total || keyOk[c - total]; };
+  int cur = (total <= g.perPage) ? 0 : total;      // on the first word if they all fit, else on the keyboard
+  while (!enabled(cur)) cur++;
+
+  // frame: top strip, the strips no cell covers, the keyboard
+  wsDrawTop(g, w, nwords, filled, prefix);
+  int listBottom = g.listY + g.lines * 10;
+  tft.fillRect(0, g.listY, 2, listBottom - g.listY, C_BG);
+  tft.fillRect(2 + g.cols * g.cellW, g.listY, SCR_W - 2 - g.cols * g.cellW, listBottom - g.listY, C_BG);
+  tft.fillRect(0, listBottom, SCR_W, g.keyY - listBottom, C_BG);
+  {
+    const char* hint = "hold: words <-> keys";       // the gap between list and keys is 8 px: one text line
+    textAt((SCR_W - 6 * (int)strlen(hint)) / 2, g.keyY - 8, hint, C_DIM);
+  }
+  tft.fillRect(0, g.keyY, 1, SCR_H - g.keyY, C_BG);
+  tft.fillRect(1 + KEY_COLS * g.keyW, g.keyY, SCR_W - 1 - KEY_COLS * g.keyW, SCR_H - g.keyY, C_BG);
+  for (int k = 0; k < NKEYS; k++) wsDrawKey(g, k, keyOk[k], cur == total + k);
+
+  int page = -1, prev = -1;
+  for (;;) {
+    int np = (cur < total) ? cur / g.perPage : (page < 0 ? 0 : page);
+    if (np != page) {
+      page = np;
+      for (int k = 0; k < g.perPage; k++) wsDrawWord(g, first, total, page, k, cur == page * g.perPage + k);
+    }
+    int cs[2] = { prev, cur };                   // repaint the two cells that changed
+    for (int j = 0; j < 2; j++) {
+      int c = cs[j];
+      if (c < 0) continue;
+      if (c >= total) wsDrawKey(g, c - total, keyOk[c - total], c == cur);
+      else if (c / g.perPage == page) wsDrawWord(g, first, total, page, c % g.perPage, c == cur);
+    }
+    prev = cur;
+    Ev e = waitEvent();
+    if (e == EV_CW || e == EV_CCW) {
+      int d = (e == EV_CW) ? 1 : -1;
+      do { cur = (cur + d + nItems) % nItems; } while (!enabled(cur));
+    } else if (e == EV_PRESS) {
+      if (cur < total) return first + cur;
+      int k = cur - total;
+      if (k == KEY_DEL)  return WS_DEL;
+      if (k == KEY_PREV) return WS_PREV;
+      if (k == KEY_ALL)  return WS_ALL;
+      if (k == KEY_NEXT) return WS_NEXT;
+      return WS_LETTER | ('a' + k);
+    } else if (e == EV_LONG) {                     // jump: list <-> keyboard
+      if (cur < total) { cur = total; while (!enabled(cur)) cur++; }
+      else if (total > 0) cur = page * g.perPage;   // top of the page that is showing
+    } else if (e == EV_TIMEOUT) return WS_TIMEOUT;
+  }
+}
+
+static bool checksumOk(int nwords) {
   uint8_t ent[32];
   bool ok = bip39_decode(gIdx, nwords, ent);
   secure_zero(ent, sizeof ent);
-  if (!ok) {
-    message("Checksum invalid", "A word is wrong, most", "likely the last one.", C_BAD);
-    wipeSecret();
-    return false;
-  }
-  return true;
+  if (!ok) message("Checksum invalid", "One word is wrong.", "Pick it and retype it.", C_BAD);
+  return ok;
 }
 
-// Entry, then review, then derive. The checksum only catches 15 of 16 wrong words
-// on a 12-word seed (255 of 256 on 24), so the user eyeballs the list first.
+// Entry: one word screen at a time, the phrase overview whenever the user asks for
+// it and once every slot is in. The checksum only catches 15 of 16 wrong words on a
+// 12-word seed (255 of 256 on 24), so the user eyeballs the phrase before deriving.
+// A wrong checksum sends them back to the overview to fix a word, not to the menu.
 static bool enterSeed(int nwords) {
-  int start = 0;
+  char prefix[8] = "";
+  int plen = 0, w = 0, filled = 0;             // slots 0..filled-1 hold a word; w is the one on screen
+  auto clearPrefix = [&]() { plen = 0; prefix[0] = 0; };
   for (;;) {
-    if (!enterWords(nwords, start)) return false;
-    int r = reviewWords(nwords);
-    if (r < 0) { wipeSecret(); clearScreen(); return false; }
-    if (r == 1) return deriveFromEntered(nwords);
-    start = nwords - 1;            // hold on review = redo the last word
-    gIdx[start] = 0;
+    if (w >= nwords) {                         // every slot is in: check the phrase, then derive
+      int p = phraseScreen(nwords, filled, PS_DERIVE);
+      if (p == PS_TIMEOUT) { clearScreen(); return false; }
+      if (p == PS_BACK) { w = nwords - 1; continue; }
+      if (p >= 0) { w = p; continue; }
+      if (!checksumOk(nwords)) continue;
+      return deriveFromEntered(nwords);
+    }
+    int r = wordScreen(w, nwords, filled, prefix);
+    if (r >= 0 && !(r & WS_LETTER)) {          // a word was picked
+      gIdx[w] = (uint16_t)r;
+      if (w == filled) filled++;
+      w++; clearPrefix();
+    } else if (r >= 0) {                       // a letter
+      if (plen < 6) { prefix[plen++] = (char)(r & 0xFF); prefix[plen] = 0; }
+    } else if (r == WS_DEL) {
+      if (plen > 0) prefix[--plen] = 0;
+      else if (w > 0) w--;
+      else if (filled == 0) { clearScreen(); return false; }    // nothing typed yet: back to the menu
+      else {                                                    // words are in: make sure
+        static const char* const q[] = { "Keep typing", "Quit, forget words" };
+        int a = runMenu("Quit?", q, 2, 0, 1);
+        if (a == MENU_TIMEOUT) { clearScreen(); return false; }
+        if (a == 1) { wipeSecret(); clearScreen(); return false; }
+      }
+    } else if (r == WS_PREV) { w--; clearPrefix(); }
+    else if (r == WS_NEXT) { w++; clearPrefix(); }
+    else if (r == WS_ALL) {
+      int p = phraseScreen(nwords, filled, w);
+      if (p == PS_TIMEOUT) { clearScreen(); return false; }
+      if (p >= 0) { w = p; clearPrefix(); }
+      else if (p == PS_DERIVE) {
+        if (checksumOk(nwords)) return deriveFromEntered(nwords);
+        w = nwords;                            // back to the overview to fix a word
+      }
+      // PS_BACK: stay on this word, typed letters kept
+    } else { clearScreen(); return false; }    // WS_TIMEOUT: already wiped
   }
 }
 
@@ -546,8 +766,9 @@ void setup() {
 }
 
 void loop() {
-  static const char* const items[] = { "Enter 12-word seed", "Enter 24-word seed", "About" };
-  int sel = runMenu("SeedBox", items, 3, 0);
+  static const char* const items[] = { "12-word seed", "24-word seed", "About" };
+  int s = (SCR_W >= 150) ? 2 : 1;        // double-size type; 12 chars x 12 px fit the 160 px screen
+  int sel = runMenu("SeedBox", items, 3, 0, s);
   switch (sel) {
     case 0: if (enterSeed(12)) browseAddresses(); break;
     case 1: if (enterSeed(24)) browseAddresses(); break;

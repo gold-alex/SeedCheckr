@@ -54,10 +54,11 @@ If the USB end sits at breadboard row R, hole N is row R+N-1. The display is set
 
 ## Controls
 
-Turn = move. Press = select. Hold 0.8 s = back / backspace / cancel.
+Turn = move. Press = select. Hold 0.8 s = back (on the word screen it jumps between the word list and the keyboard instead).
 
-- **Entering words:** pick letters until the list is short enough, then pick the word. Hold = delete a letter, then back a word, then cancel. Checksum is checked after the last word.
-- **Review screen:** all words shown once more before deriving. Press = derive, hold = redo the last word. This exists because the BIP39 checksum lets 1 in 16 wrong words through on a 12-word seed (1 in 256 on 24); a wrong word just gives you empty addresses with no error, so look.
+- **Main menu:** double-size type, three items: 12-word seed, 24-word seed, About.
+- **Entering words:** one screen per word. The words that match what you have typed fill the top, a letter keyboard sits under them, and under that three word controls: `< prev`, `see all`, `next >`. The knob runs one cursor through the words, then the keys, then the controls. Press a word to take it; letters that lead nowhere are greyed out and skipped. The arrow key deletes a letter, steps back a word when nothing is typed, and on word 1 returns to the menu (it asks first if words are already in). Hold the knob to jump from the list to the keyboard or back, so a long list never has to be scrolled through; the hint line between them says so. What you have typed so far is shown big and yellow at the top, with an underscore cursor. `< prev` and `next >` move between words you have already entered without retyping them; on a slot that already holds a word, that word is shown in grey where the typed letters go, and picking a new word replaces it. `see all` opens the phrase screen.
+- **Phrase screen:** every slot in two columns, shown after the last word and whenever you press `see all`. Turn = move over the words, press = edit that word, hold = back. Once every slot is in, one turn up from word 1 highlights the title bar, `> Derive addresses`; press to go. The BIP39 checksum is checked at that point and a bad one sends you back to this screen to fix a word, not to the menu. The screen exists because the checksum lets 1 in 16 wrong words through on a 12-word seed (1 in 256 on 24); a wrong word just gives you empty addresses with no error, so look.
 - **Portfolio (top of the list):** press = one QR with all 20 addresses. Scan it, the web page does the rest (next section). Press = back, hold = back to list.
 - **Address text screen:** turn = next/prev chain, press = QR, hold = back to list.
 - **QR screen:** turn = toggle LINK (opens explorer/portfolio page) vs RAW (just the address, for pasting into any app). Press = back.
@@ -107,7 +108,7 @@ Not included: Cardano, Polkadot, TON, XMR (each a different key scheme; Monero i
 - QR: the per-chain codes (addresses, explorer links, the 111-char zpub) encode and decode back the same way.
 - Compiled with the real Pico toolchain (arduino-pico 6.3.0, gnu23, No USB): 129 KB flash, 14 KB RAM, zero warnings in project files. `seedbox.ino.uf2` in this folder is that build.
 - Layout geometry checked numerically for 160x128 and 128x160.
-- Not tested: the physical display init and knob direction (no hardware here). Both are one-line fixes listed below.
+- On the real board (2026-10-23): display init, colors, knob direction and the Portfolio scan all confirmed. Rotation, colors and knob direction are one-line fixes listed below if your parts differ.
 
 ## Security model, read this
 
@@ -124,7 +125,7 @@ Not included: Cardano, Polkadot, TON, XMR (each a different key scheme; Monero i
 
 - Colors inverted or wrong: change `INITR_BLACKTAB` to `INITR_GREENTAB` or `INITR_REDTAB`.
 - Upside down: `#define TFT_ROTATION 3`. Vertical mount: 0 or 2.
-- Knob scrolls backwards: `#define ENC_REVERSE 1`.
+- Knob scrolls backwards: flip `ENC_REVERSE` (1 on the reference build; 0 if your encoder is wired the other way round).
 - Skipped clicks: add the Bourns RC filter (10k pull-up, 10k series, 10nF to GND) on A and B.
 - QR won't scan: the Portfolio code and the zpub/xpub codes are the dense ones (2 px per module). Hold the phone 8-12 cm away, dim the room, or for a single chain scan RAW instead of LINK. Everything else is 3+ px per module and scans easily.
 - Portfolio screen says "QR failed": `PORTFOLIO_URL` is too long for the code. Shorten the URL.
