@@ -1,5 +1,6 @@
 // chains.c - see chains.h
 #include "chains.h"
+#include "chains_util.h"
 #include <string.h>
 #include <stdio.h>
 #include "trezor/bip32.h"
@@ -36,17 +37,16 @@ void random_buffer(uint8_t* buf, size_t len) {
 // so just spin; the idle wipe doesn't run but nothing secret is displayed either.
 void tc_fault_handler(const char* msg) { (void)msg; for (;;) {} }
 
-#define H 0x80000000u
 
 // ---------------- helpers ----------------
-static int derive(HDNode* n, const uint8_t seed[64], const char* curve, const uint32_t* path, int depth) {
+int cu_derive(HDNode* n, const uint8_t seed[64], const char* curve, const uint32_t* path, int depth) {
   if (!hdnode_from_seed(seed, 64, curve, n)) return -1;
   for (int i = 0; i < depth; i++) if (!hdnode_private_ckd(n, path[i])) return -1;
   hdnode_fill_public_key(n);
   return 0;
 }
 
-static void hex_0x(const uint8_t* b, int n, char* out) {
+void cu_hex_0x(const uint8_t* b, int n, char* out) {
   static const char hx[] = "0123456789abcdef";
   out[0] = '0'; out[1] = 'x';
   for (int i = 0; i < n; i++) { out[2 + 2*i] = hx[b[i] >> 4]; out[3 + 2*i] = hx[b[i] & 15]; }
@@ -54,7 +54,7 @@ static void hex_0x(const uint8_t* b, int n, char* out) {
 }
 
 // keccak256(uncompressed pubkey)[12..32]
-static void eth_addr_bytes(const HDNode* n, uint8_t out[20]) {
+void cu_eth_addr_bytes(const HDNode* n, uint8_t out[20]) {
   uint8_t pub65[65], h[32];
   ecdsa_get_public_key65(&secp256k1, n->private_key, pub65);
   keccak_256(pub65 + 1, 64, h);
@@ -63,8 +63,8 @@ static void eth_addr_bytes(const HDNode* n, uint8_t out[20]) {
 }
 
 // EIP-55 mixed-case checksum
-static void eth_checksum(const uint8_t a[20], char* out) {
-  char low[43]; hex_0x(a, 20, low);
+void cu_eth_checksum(const uint8_t a[20], char* out) {
+  char low[43]; cu_hex_0x(a, 20, low);
   uint8_t h[32]; keccak_256((const uint8_t*)low + 2, 40, h);
   out[0] = '0'; out[1] = 'x';
   for (int i = 0; i < 40; i++) {
@@ -76,7 +76,7 @@ static void eth_checksum(const uint8_t a[20], char* out) {
   out[42] = 0;
 }
 
-static void bech32_bytes(const char* hrp, const uint8_t* in, size_t inlen, char* out) {
+void cu_bech32_bytes(const char* hrp, const uint8_t* in, size_t inlen, char* out) {
   uint8_t d5[64]; size_t o = 0; uint32_t acc = 0; int bits = 0;
   for (size_t i = 0; i < inlen; i++) {
     acc = (acc << 8) | in[i]; bits += 8;
@@ -120,7 +120,11 @@ static const ChainInfo CHAINS[] = {
 };
 #define N_CHAINS ((int)(sizeof CHAINS / sizeof CHAINS[0]))
 
-int chains_count(void) { return N_CHAINS; }
+int chains_count(void) { return N_CHAINS + ext_utxo_count() + ext_cosmos_count() + ext_ed_count(); }
+
+void cu_row(ChainAddr* r, const char* name, const char* path, const char* link, uint8_t ext) {
+  r->name = name; r->path = path; r->link = link; r->ext = ext; r->addr[0] = 0; r->rawlen = 0;
+}
 
 static const char* COSMOS_HRP[] = { "cosmos", "osmo", "celestia", "dydx", "sei", "akash", "juno", "stars" };
 
@@ -129,40 +133,41 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
   uint8_t seed[64];
   HDNode n, parent;
   int rc = -1, k = 0;
-  memset(out, 0, sizeof(ChainAddr) * N_CHAINS);
+  if (chains_count() > CHAINS_MAX) return -1;   // every ChainAddr array is CHAINS_MAX long
+  memset(out, 0, sizeof(ChainAddr) * chains_count());
   for (int i = 0; i < N_CHAINS; i++) { out[i].name = CHAINS[i].name; out[i].path = CHAINS[i].path; out[i].link = CHAINS[i].link; }
-  if (progress) progress(0, N_CHAINS);
+  if (progress) progress(0, chains_count());
 
   mnemonic_to_seed(mnemonic, passphrase, seed, NULL);
 
   // ---- ETH (and INJ, which is the ETH key with a bech32 wrapper) ----
   { uint32_t p[] = { 44|H, 60|H, 0|H, 0, 0 };
-    if (derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
-    uint8_t a[20]; eth_addr_bytes(&n, a);
-    eth_checksum(a, out[0].addr);          k = 1;  if (progress) progress(k, N_CHAINS);
-    bech32_bytes("inj", a, 20, out[16].addr);
+    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    uint8_t a[20]; cu_eth_addr_bytes(&n, a);
+    cu_eth_checksum(a, out[0].addr);          k = 1;  if (progress) progress(k, chains_count());
+    cu_bech32_bytes("inj", a, 20, out[16].addr);
     memcpy(out[0].raw, a, 20);  out[0].rawlen = 20;
     memcpy(out[16].raw, a, 20); out[16].rawlen = 20; }
 
   // ---- BTC zpub + first native segwit address ----
   { uint32_t p[] = { 84|H, 0|H };
-    if (derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
     uint32_t fp = hdnode_fingerprint(&parent);
     n = parent;
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
     hdnode_fill_public_key(&n);
     hdnode_serialize_public(&n, fp, 0x04b24746, out[1].addr, CHAIN_ADDR_MAX);   // "zpub"
-    k = 2; if (progress) progress(k, N_CHAINS);
+    k = 2; if (progress) progress(k, chains_count());
     if (!hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
     hdnode_fill_public_key(&n);
     uint8_t pkh[20]; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, pkh);
     segwit_addr_encode(out[2].addr, "bc", 0, pkh, 20);
     memcpy(out[2].raw, pkh, 20); out[2].rawlen = 20;
-    k = 3; if (progress) progress(k, N_CHAINS); }
+    k = 3; if (progress) progress(k, chains_count()); }
 
   // ---- BTC legacy xpub ----
   { uint32_t p[] = { 44|H, 0|H };
-    if (derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
     uint32_t fp = hdnode_fingerprint(&parent);
     n = parent;
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
@@ -171,74 +176,81 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     if (!hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;   // first legacy address, raw only
     hdnode_fill_public_key(&n);
     ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, out[3].raw); out[3].rawlen = 20;
-    k = 4; if (progress) progress(k, N_CHAINS); }
+    k = 4; if (progress) progress(k, chains_count()); }
 
   // ---- LTC native segwit ----
   { uint32_t p[] = { 84|H, 2|H, 0|H, 0, 0 };
-    if (derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
     uint8_t pkh[20]; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, pkh);
     segwit_addr_encode(out[4].addr, "ltc", 0, pkh, 20);
     memcpy(out[4].raw, pkh, 20); out[4].rawlen = 20;
-    k = 5; if (progress) progress(k, N_CHAINS); }
+    k = 5; if (progress) progress(k, chains_count()); }
 
   // ---- DOGE P2PKH ----
   { uint32_t p[] = { 44|H, 3|H, 0|H, 0, 0 };
-    if (derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
     ecdsa_get_address(n.public_key, 0x1e, HASHER_SHA2_RIPEMD, HASHER_SHA2D, out[5].addr, CHAIN_ADDR_MAX);
     ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, out[5].raw); out[5].rawlen = 20;
-    k = 6; if (progress) progress(k, N_CHAINS); }
+    k = 6; if (progress) progress(k, chains_count()); }
 
   // ---- SOL (SLIP-10 ed25519, Phantom/Solflare default path) ----
   { uint32_t p[] = { 44|H, 501|H, 0|H, 0|H };
-    if (derive(&n, seed, ED25519_NAME, p, 4)) goto done;
+    if (cu_derive(&n, seed, ED25519_NAME, p, 4)) goto done;
     size_t sz = CHAIN_ADDR_MAX; b58enc(out[6].addr, &sz, n.public_key + 1, 32);
     memcpy(out[6].raw, n.public_key + 1, 32); out[6].rawlen = 32;
-    k = 7; if (progress) progress(k, N_CHAINS); }
+    k = 7; if (progress) progress(k, chains_count()); }
 
   // ---- TRX ----
   { uint32_t p[] = { 44|H, 195|H, 0|H, 0, 0 };
-    if (derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
-    uint8_t raw[21]; raw[0] = 0x41; eth_addr_bytes(&n, raw + 1);
+    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    uint8_t raw[21]; raw[0] = 0x41; cu_eth_addr_bytes(&n, raw + 1);
     base58_encode_check(raw, 21, HASHER_SHA2D, out[7].addr, CHAIN_ADDR_MAX);
     memcpy(out[7].raw, raw + 1, 20); out[7].rawlen = 20;
-    k = 8; if (progress) progress(k, N_CHAINS); }
+    k = 8; if (progress) progress(k, chains_count()); }
 
   // ---- Cosmos family: one key, many prefixes ----
   { uint32_t p[] = { 44|H, 118|H, 0|H, 0, 0 };
-    if (derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
     uint8_t pkh[20]; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, pkh);
     for (int i = 0; i < 8; i++) {
-      bech32_bytes(COSMOS_HRP[i], pkh, 20, out[8 + i].addr);
+      cu_bech32_bytes(COSMOS_HRP[i], pkh, 20, out[8 + i].addr);
       memcpy(out[8 + i].raw, pkh, 20); out[8 + i].rawlen = 20;
     }
-    k = 17; if (progress) progress(k, N_CHAINS); }   // 16 = INJ, already filled
+    k = 17; if (progress) progress(k, chains_count()); }   // 16 = INJ, already filled
 
   // ---- XRP ----
   { uint32_t p[] = { 44|H, 144|H, 0|H, 0, 0 };
-    if (derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
     uint8_t raw[21]; raw[0] = 0x00; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, raw + 1);
     base58_encode_check(raw, 21, HASHER_SHA2D, out[17].addr, CHAIN_ADDR_MAX);
     xrp_remap(out[17].addr);
     memcpy(out[17].raw, raw + 1, 20); out[17].rawlen = 20;
-    k = 18; if (progress) progress(k, N_CHAINS); }
+    k = 18; if (progress) progress(k, chains_count()); }
 
   // ---- SUI: blake2b-256(0x00 || pubkey) ----
   { uint32_t p[] = { 44|H, 784|H, 0|H, 0|H, 0|H };
-    if (derive(&n, seed, ED25519_NAME, p, 5)) goto done;
+    if (cu_derive(&n, seed, ED25519_NAME, p, 5)) goto done;
     uint8_t buf[33], h[32]; buf[0] = 0x00; memcpy(buf + 1, n.public_key + 1, 32);
     blake2b(buf, 33, h, 32);
-    hex_0x(h, 32, out[18].addr);
+    cu_hex_0x(h, 32, out[18].addr);
     memcpy(out[18].raw, h, 32); out[18].rawlen = 32;
-    k = 19; if (progress) progress(k, N_CHAINS); }
+    k = 19; if (progress) progress(k, chains_count()); }
 
   // ---- APT: sha3-256(pubkey || 0x00) ----
   { uint32_t p[] = { 44|H, 637|H, 0|H, 0|H, 0|H };
-    if (derive(&n, seed, ED25519_NAME, p, 5)) goto done;
+    if (cu_derive(&n, seed, ED25519_NAME, p, 5)) goto done;
     uint8_t buf[33], h[32]; memcpy(buf, n.public_key + 1, 32); buf[32] = 0x00;
     sha3_256(buf, 33, h);
-    hex_0x(h, 32, out[19].addr);
+    cu_hex_0x(h, 32, out[19].addr);
     memcpy(out[19].raw, h, 32); out[19].rawlen = 32;
-    k = 20; if (progress) progress(k, N_CHAINS); }
+    k = 20; if (progress) progress(k, chains_count()); }
+
+  // ---- extension groups (animated "more chains" frames) ----
+  { int total = chains_count(), at = N_CHAINS;
+    if (progress) progress(at, total);
+    if (ext_utxo_derive(mnemonic, seed, out + at) < 0) goto done;   at += ext_utxo_count();   if (progress) progress(at, total);
+    if (ext_cosmos_derive(mnemonic, seed, out + at) < 0) goto done; at += ext_cosmos_count(); if (progress) progress(at, total);
+    if (ext_ed_derive(mnemonic, seed, out + at) < 0) goto done;     at += ext_ed_count();     if (progress) progress(at, total); }
 
   rc = 0;
 done:

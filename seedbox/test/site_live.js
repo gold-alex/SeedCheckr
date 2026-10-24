@@ -15,6 +15,8 @@ const appSrc = fs.readFileSync(path.join(REPO, 'docs/app.js'), 'utf8');
 
 // ---- payload ----
 let arg = process.argv[2] || 'demo';
+const MORE = process.argv.includes('--more');
+let FRAMES = [];
 let payload;
 if (arg === 'demo') {
   payload = appSrc.match(/DEMO_PAYLOAD = '([^']+)'/)[1];
@@ -28,16 +30,23 @@ if (arg === 'demo') {
   for (let i = 0; i < bits.length; i += 11) words.push(WORDS[parseInt(bits.slice(i, i + 11), 2)]);
   const out = execFileSync(path.join(REPO, 'seedbox/test/test_portfolio'), [words.join(' ')], { encoding: 'utf8' });
   payload = Object.fromEntries(out.trim().split('\n').map(l => l.split('|'))).PORTFOLIO;
+} else if (arg.startsWith('mnemonic:')) {
+  const out = execFileSync(path.join(REPO, 'seedbox/test/test_portfolio'), [arg.slice(9)], { encoding: 'utf8' }).trim().split('\n');
+  payload = out.find((l) => l.startsWith('PORTFOLIO|')).split('|')[1];
+  FRAMES = out.filter((l) => l.startsWith('FRAME|')).map((l) => l.slice(6));
 } else payload = arg;
 
 // ---- stub DOM ----
 function el(tag) {
   const e = {
-    tag, children: [], attrs: {}, style: {}, classes: new Set(), hidden: true /* sections start hidden in the HTML */, textContent: '', innerHTML: '',
+    tag, children: [], attrs: {}, style: {}, classes: new Set(), hidden: true /* sections start hidden in the HTML */, innerHTML: '', _text: '',
+    get textContent() { return this._text; }, set textContent(v) { this._text = v; this.children = []; },
     setAttribute(k, v) { e.attrs[k] = v; },
     appendChild(c) { e.children.push(c); return c; },
     append(...cs) { e.children.push(...cs); },
-    addEventListener() {},
+    handlers: {},
+    addEventListener(ev, fn) { e.handlers[ev] = fn; },
+    scrollIntoView() {},
     getContext() { return null; },
   };
   e.classList = { add: (c) => e.classes.add(c), remove: (c) => e.classes.delete(c), toggle: (c) => e.classes.has(c) ? e.classes.delete(c) : e.classes.add(c), contains: (c) => e.classes.has(c) };
@@ -51,6 +60,10 @@ globalThis.matchMedia = () => ({ matches: true });   // reduced motion: no waits
 globalThis.addEventListener = () => {};
 globalThis.SeedDecode = require(path.join(REPO, 'docs/decode.js'));
 globalThis.SolanaATA = require(path.join(REPO, 'docs/ata.js'));
+globalThis.SeedScan = require(path.join(REPO, 'docs/scan.js'));
+globalThis.SeedExtra = require(path.join(REPO, 'docs/extra.js'));
+// stand-in camera: hands the device's frames to the page as if it read them off the screen
+globalThis.SeedScan.startCamera = (video, onText) => { const stop = () => {}; stop.ready = Promise.resolve('test'); setTimeout(() => { FRAMES.forEach((f) => onText(f)); FRAMES.forEach((f) => onText(f)); }, 50); return stop; };
 
 // ---- fetch wrapper: what a browser would see ----
 const realFetch = globalThis.fetch;
@@ -80,10 +93,17 @@ vm.runInThisContext(appSrc, { filename: 'app.js' });
 (async () => {
   const t0 = Date.now();
   const q = globalThis.document.querySelector;
-  for (const s of ['#casefile', '#error', '#error-text', '#case-id', '#verdict', '#verdict-text', '#verdict-sub', '#verdict-fine', '#rows', '#rows-nothing', '#nothing-wrap', '#nothing-summary']) q(s);
+  for (const s of ['#casefile', '#error', '#error-text', '#case-id', '#verdict', '#verdict-text', '#verdict-sub', '#verdict-fine', '#rows', '#rows-nothing', '#nothing-wrap', '#nothing-summary', '#more-text', '#more-start', '#more-status']) q(s);
   while (Date.now() - t0 < 90000) {
     if (!els['#casefile'].hidden || !els['#error'].hidden) break;
     await new Promise((r) => setTimeout(r, 200));
+  }
+  if (MORE && els['#casefile'] && !els['#casefile'].hidden) {
+    console.log('(pressing "Scan the moving QR" with ' + FRAMES.length + ' frames)');
+    els['#more-start'].handlers.click();
+    const t1 = Date.now();
+    while (Date.now() - t1 < 90000 && !/^Added /.test(els['#more-text'].textContent)) await new Promise((r) => setTimeout(r, 200));
+    console.log('more: ' + els['#more-text'].textContent + '  (' + ((Date.now() - t1) / 1000).toFixed(1) + 's)');
   }
   const took = ((Date.now() - t0) / 1000).toFixed(1);
   if (!els['#error'].hidden) { console.log('ERROR PAGE:', els['#error-text'].textContent); process.exit(1); }

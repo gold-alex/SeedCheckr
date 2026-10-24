@@ -16,6 +16,7 @@ seedbox/test/vectors.txt
 build/
 seedbox/test/test_portfolio
 seedbox/test/test_qr
+seedbox/test/test_frames
 seedbox/test/node_modules/
 seedbox/test/mine.txt
 seedbox/test/ref.txt

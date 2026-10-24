@@ -13,9 +13,18 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     # then URL + payload -> the device's QR encoder -> jsQR (an unrelated reader) -> the same URL
     npm install && node verify_site.js 10     # N mnemonics of each length, 12 to 24 words
 
+    # "more chains" frames (docs/EXTENSIONS.md): random extension rows -> device framing (test_frames)
+    # -> device QR encoder (test_qr -f) -> jsQR -> docs/scan.js, shuffled with duplicates -> same records
+    node verify_frames.js 10
+
+    # the moving QR against the page: device frames -> docs/scan.js -> docs/extra.js -> every address
+    # equals the device's own (test_chains); also checks extra.js's hashes against node / hashlib
+    PYTHON=/path/to/venv/bin/python node verify_extra.js 3
+
     # the page against the live networks: runs docs/app.js unchanged with a stub DOM, prints the
     # verdict and case file, and checks every endpoint's CORS answer for a github.io origin
     node site_live.js demo      # a famous wallet, expects "are in possession"
     node site_live.js random    # a fresh mnemonic, expects "not in possession"
+    node site_live.js "mnemonic:abandon ... about" --more   # both QRs; a stand-in camera feeds the device's frames
 
-`test_portfolio "words..."` prints the payload and every address for one mnemonic. `test_qr URL PAYLOAD` (or `test_qr -t TEXT`) dumps the QR modules as text, exactly what the screen would show.
+`test_portfolio "words..."` prints the payload and every address for one mnemonic. `test_frames < rows` prints the extension bytes and `FRAME|` lines for rows given as `<type hex> <raw hex>` lines. `test_qr URL PAYLOAD` (or `test_qr -t TEXT`, or `test_qr -f FRAMETEXT`) dumps the QR modules as text, exactly what the screen would show.

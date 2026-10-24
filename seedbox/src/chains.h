@@ -16,9 +16,14 @@ typedef struct {
   const char* path;    // derivation path shown on screen
   const char* link;    // explorer URL prefix; address is appended (NULL = none)
   char addr[CHAIN_ADDR_MAX];
-  uint8_t raw[32];     // the bytes behind addr: 20-byte hash for secp256k1 chains, 32 for SOL/SUI/APT
+  uint8_t raw[64];     // the bytes behind addr: 20-byte hash for secp256k1 chains, 32 for SOL/SUI/APT,
+                       // up to 64 for extension rows (e.g. Cardano: payment + stake key hash)
   uint8_t rawlen;      // 0 on the zpub row; on the legacy xpub row it is the pkh of m/44'/0'/0'/0/0
+  uint8_t ext;         // 0 = core row (in the v1 portfolio QR). Otherwise the record type this row
+                       // gets in the animated "more chains" frames; see docs/EXTENSIONS.md
 } ChainAddr;           // raw feeds the one-scan portfolio QR, see portfolio.h
+
+#define CHAINS_MAX 128   // upper bound on chains_count(); size ChainAddr arrays with this
 
 // Number of entries derive_all() produces.
 int chains_count(void);

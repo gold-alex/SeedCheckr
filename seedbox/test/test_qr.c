@@ -4,6 +4,7 @@
 //
 //   test_qr URLPREFIX PAYLOAD   portfolio code: byte segment + alphanumeric segment
 //   test_qr -t TEXT             plain text, the call the per-chain QR screen makes
+//   test_qr -f TEXT             one "more chains" frame, via portfolio_frame_qr()
 //
 // First line: V<version> S<size>. Prints TOOLONG and exits 1 if it does not fit.
 #include <stdio.h>
@@ -18,9 +19,11 @@ int main(int argc, char** argv) {
   bool ok;
   if (argc == 3 && !strcmp(argv[1], "-t"))
     ok = qrcodegen_encodeText(argv[2], tmp, qr, qrcodegen_Ecc_LOW, 1, MAXV, qrcodegen_Mask_AUTO, true);
+  else if (argc == 3 && !strcmp(argv[1], "-f"))
+    ok = portfolio_frame_qr(argv[2], tmp, qr, MAXV);
   else if (argc == 3)
     ok = portfolio_qr(argv[1], argv[2], tmp, qr, MAXV);
-  else { fprintf(stderr, "usage: test_qr URLPREFIX PAYLOAD | test_qr -t TEXT\n"); return 2; }
+  else { fprintf(stderr, "usage: test_qr URLPREFIX PAYLOAD | test_qr -t TEXT | test_qr -f FRAMETEXT\n"); return 2; }
   if (!ok) { printf("TOOLONG\n"); return 1; }
   int size = qrcodegen_getSize(qr);
   printf("V%d S%d\n", (size - 17) / 4, size);

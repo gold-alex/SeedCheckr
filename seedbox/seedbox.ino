@@ -73,7 +73,7 @@ static uint16_t gIdx[24];
 static bool     gHave[24];        // slot i holds a word (slots can be filled in any order)
 static char     gMnemonic[24 * 9];
 // Public: derived addresses, kept until wipe / idle timeout / power off.
-static ChainAddr gAddr[32];
+static ChainAddr gAddr[CHAINS_MAX];
 static bool      gLoaded = false;
 
 static int haveCount(int nwords) { int n = 0; for (int i = 0; i < nwords; i++) n += gHave[i]; return n; }
@@ -179,6 +179,18 @@ static Ev waitEvent() {
     Ev e = pollEvent();
     if (e == EV_TIMEOUT) { wipeAll(); return e; }
     if (e != EV_NONE) return e;
+    delay(2);
+  }
+}
+
+// Like waitEvent, but gives up after ms and returns EV_NONE (for animations).
+static Ev waitEventFor(uint32_t ms) {
+  uint32_t t0 = millis();
+  for (;;) {
+    Ev e = pollEvent();
+    if (e == EV_TIMEOUT) { wipeAll(); return e; }
+    if (e != EV_NONE) return e;
+    if (millis() - t0 >= ms) return EV_NONE;
     delay(2);
   }
 }
@@ -377,6 +389,16 @@ static bool drawPortfolioQR() {
   return true;
 }
 
+// Frame i (1-based) of the "more chains" codes: every row with ext != 0, as the
+// animated frames of docs/EXTENSIONS.md. Returns false if it does not fit.
+static bool drawMoreFrame(int i) {
+  char text[PORTFOLIO_FRAME_TEXT_MAX];
+  if (portfolio_frame_text(gAddr, chains_count(), i, text, sizeof text) < 0) return false;
+  if (!portfolio_frame_qr(text, qrTemp, qrCode, QR_MAX_VERSION)) return false;
+  paintQR();
+  return true;
+}
+
 // ---------------- Address screens ----------------
 // Text view. Press = QR, turn = next/prev chain, hold = back to list.
 // Returns the chain index to continue with, or -1 for back.
@@ -417,7 +439,7 @@ static int showAddressText(int i) {
     textAt(SCR_W - 2 - 6 * 10, SCR_H - 10, "hold: back", C_DIM);
     gAddrScreenLive = true;
   }
-  char pos[12]; snprintf(pos, sizeof pos, "\x11%d/%d\x10", i + 1, chains_count());   // turn arrows
+  char pos[28]; snprintf(pos, sizeof pos, "\x11%d/%d\x10", i + 1, chains_count());   // turn arrows
   drawTitle(a.name);
   titleTag(pos);
   lineAt(2, 14, a.path, C_DIM, cpl);
@@ -455,8 +477,45 @@ static bool showAddressQR(int i) {
   }
 }
 
+// "More chains" view: the rows the Portfolio QR has no room for, as frames that
+// loop by themselves for the page's in-page camera scanner. Turn = step one frame
+// and pause, press = pause / play, hold = back to the Portfolio QR.
+#define MORE_FRAME_MS 500   // per frame; long enough for a phone to lock on, short enough
+                            // that a missed frame comes round again within a few seconds
+static void showMore(int n) {
+  int i = 1;
+  bool paused = false, redraw = true;
+  uint32_t shownAt = 0;
+  clearScreen();
+  while (gLoaded) {
+    if (redraw) {
+      shownAt = millis();
+      gHoldQR = drawMoreFrame(i);
+      if (!gHoldQR) { clearScreen(); textAt(4, 60, "QR failed", C_BAD); }
+      char what[28];
+      snprintf(what, sizeof what, "MORE %d/%d", i, n);
+      qrLabels(what, paused ? " press:play" : "  scan me", "turn:step hold:back");
+      redraw = false;
+    }
+    uint32_t spent = millis() - shownAt;
+    Ev e = paused ? waitEvent() : waitEventFor(spent < MORE_FRAME_MS ? MORE_FRAME_MS - spent : 0);
+    if (isBack(e)) break;
+    if (e == EV_CW)  { i = i % n + 1; paused = true; redraw = true; }
+    if (e == EV_CCW) { i = (i + n - 2) % n + 1; paused = true; redraw = true; }
+    if (e == EV_PRESS) { paused = !paused; redraw = true; }
+    // time's up: next frame, unless the knob is down (a hold is starting; its bar
+    // is drawn over the bottom of the code and a repaint would erase it)
+    if (e == EV_NONE && digitalRead(ENC_SW) != LOW) { i = i % n + 1; redraw = true; }
+  }
+  gHoldQR = false;
+}
+
 // Portfolio view. Press = QR with every address, press again = back here, hold = back to list.
+// On the QR, a turn opens the "more chains" frames when there are any.
 static void showPortfolio() {
+  const int frames = portfolio_frame_count(gAddr, chains_count());
+  int more = 0;
+  for (int i = 0; i < chains_count(); i++) more += gAddr[i].ext != 0;
   for (;;) {
     clearScreen();
     drawTitle("Portfolio");
@@ -465,25 +524,40 @@ static void showPortfolio() {
     textAt(2, 42, "Scan: the web page", C_DIM);
     textAt(2, 52, "checks every chain.", C_DIM);
     textAt(2, 68, "BTC: 1st addr only.", C_DIM);
+    if (frames > 0) {
+      char l[24];
+      snprintf(l, sizeof l, "Then turn: %d more", more);
+      textAt(2, 84, l, C_FG);
+      textAt(2, 94, "chains, moving QRs.", C_FG);
+    }
     textAt(2, SCR_H - 14, "press: QR  hold: back", C_DIM);
     Ev e = waitEvent();
     if (isBack(e)) return;
     if (e != EV_PRESS) continue;
-    clearScreen();
-    gHoldQR = drawPortfolioQR();
-    if (!gHoldQR) textAt(4, 60, "QR failed", C_BAD);
-    qrLabels("ALL CHAINS", "  scan me", "press: back");
+    bool redraw = true;
     for (;;) {
+      if (redraw) {
+        clearScreen();
+        gHoldQR = drawPortfolioQR();
+        if (!gHoldQR) textAt(4, 60, "QR failed", C_BAD);
+        qrLabels("ALL CHAINS", "  scan me", frames > 0 ? "turn: more chains" : "press: back");
+        redraw = false;
+      }
       e = waitEvent();
       if (e == EV_PRESS) break;
       if (isBack(e)) { gHoldQR = false; return; }
+      if (frames > 0 && (e == EV_CW || e == EV_CCW)) {
+        showMore(frames);
+        if (!gLoaded) return;       // idle timeout wiped everything
+        redraw = true;
+      }
     }
     gHoldQR = false;
   }
 }
 
 static void browseAddresses() {
-  static const char* items[34];
+  static const char* items[CHAINS_MAX + 2];
   int n = chains_count();
   items[0] = "Portfolio (all chains)";
   for (int i = 0; i < n; i++) items[i + 1] = gAddr[i].name;
@@ -531,7 +605,7 @@ static bool deriveFromEntered(int nwords) {
   clearScreen();
   drawTitle("Deriving addresses");
   textAt(4, 40, "Seed is in RAM only", C_DIM);
-  textAt(4, 52, "for the next second.", C_DIM);
+  textAt(4, 52, "for a few seconds.", C_DIM);
   tft.drawRect(4, 70, SCR_W - 8, 10, C_FG);
   int rc = derive_all(gMnemonic, "", gAddr, deriveProgress);
   wipeSecret();

@@ -42,6 +42,30 @@ int portfolio_text(const ChainAddr* rows, char* out, int cap);
 bool portfolio_qr(const char* url_prefix, const char* payload,
                   uint8_t* temp, uint8_t* qrcode, int max_version);
 
+// ---- "more chains": animated frames, format in docs/EXTENSIONS.md ----
+// Rows with ext != 0 become records [type][len][raw], in row order. The records
+// are split into chunks of 240 bytes, one alphanumeric QR per chunk:
+//   SB2 <i> <n> <CRC-32 of all records, 8 hex> <base43 of 0x01 || chunk>
+// Nothing is buffered: each call walks the rows again (a few KB at most).
+#define PORTFOLIO_FRAME_CHUNK     240
+#define PORTFOLIO_FRAME_TEXT_MAX  400   // "SB2 999 999 XXXXXXXX " + 356 base43 chars + NUL
+
+// The extension bytes. out == NULL: just returns their length.
+// Returns the length, or -1 if cap is too small.
+int portfolio_ext_bytes(const ChainAddr* rows, int n, uint8_t* out, int cap);
+
+// Number of frames, 0 when no row has ext set.
+int portfolio_frame_count(const ChainAddr* rows, int n);
+
+// Text of frame i, 1-based (1..portfolio_frame_count()), as the spec numbers them.
+// Returns the string length, or -1 if i is out of range or cap is too small.
+int portfolio_frame_text(const ChainAddr* rows, int n, int i, char* out, int cap);
+
+// One frame as a QR: alphanumeric mode, ECC L (raised if it fits the same version),
+// smallest version <= max_version. temp and qrcode must each be
+// qrcodegen_BUFFER_LEN_FOR_VERSION(max_version) bytes. False if it does not fit.
+bool portfolio_frame_qr(const char* text, uint8_t* temp, uint8_t* qrcode, int max_version);
+
 #ifdef __cplusplus
 }
 #endif
