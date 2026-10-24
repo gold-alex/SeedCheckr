@@ -16,7 +16,7 @@ Unknown types are skipped by `len`, so old pages keep working with new devices.
 
 ## Frames
 
-The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames (7 today).
+The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames (8 today).
 The device shows each for 400 ms (`MORE_FRAME_MS`), chosen with `seedbox/test/verify_screen.js`.
 Frame `i` (1-based) is one QR, alphanumeric mode only, ECC L, version 1-11:
 
@@ -116,6 +116,16 @@ page rebuilds the xpub and asks Haskoin for the balance of every used address
 | 0x71 | Bitcoin legacy (also scanned on Bitcoin Cash, the 2017 fork) | m/44'/0'/0' | core row 3 (xpub) |
 | 0x72 | Bitcoin nested segwit | m/49'/0'/0' | 0x10 |
 | 0x73 | Bitcoin Cash | m/44'/145'/0' | 0x14 |
+| 0x74 | Bitcoin taproot (page scans it itself) | m/86'/0'/0' | 0x11 |
+| 0x75 | Litecoin native segwit (page scans it itself) | m/84'/2'/0' | core row 4 (LTC) |
+| 0x76 | Litecoin legacy (page scans it itself) | m/44'/2'/0' | 0x12 |
+| 0x77 | Ethereum address chain: MetaMask accounts 2-5 | m/44'/60'/0'/0 (fingerprint 0) | core row 0 (ETH) |
+
+For 0x74-0x76 no xpub service answers a browser, so the page derives the addresses
+itself (BIP32 public derivation, plus the BIP86 tweak for taproot) and walks them
+until 10 unused receive and 5 unused change addresses in a row, asking mempool.space /
+blockstream.info / litecoinspace.org about each. For 0x77 it derives indexes 1-4
+(MetaMask's accounts 2-5) and checks each on the ten largest EVM networks.
 
 An extended public key reveals every address of that account (privacy, not funds):
 it goes to Haskoin only, never to price APIs.

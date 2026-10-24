@@ -68,9 +68,9 @@ for (const m of mns) {
   ok(res && res.done, 'frames assemble');
   const recs = S.records(res.bytes);
   const ext = dev.slice(20);                                                          // device rows after the 20 core rows
-  const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x73);                  // account xpub records
+  const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x77);                  // account xpub records
   ok(recs.length - acct.length === ext.length, 'one record per device extension row (' + (recs.length - acct.length) + ' vs ' + ext.length + ')');
-  ok(acct.length === 4, 'four account xpub records');
+  ok(acct.length === 8, 'eight account key records');
   const built = X.build(recs, K);
   const pageAddrs = new Set(built.map((c) => c.addr.replace(/^[PX]-/, '')));
   for (const [name, a] of ext) {
@@ -93,6 +93,21 @@ for (const m of mns) {
   ok(X.hex(X.firstPkh(r70.bytes)) === X.hex(pv1.btc), 'moving QR binds to its own Portfolio QR');
   if (prev70) ok(X.hex(X.firstPkh(prev70)) !== X.hex(pv1.btc), "another seed's moving QR does not bind");
   prev70 = r70.bytes;
+  // wallets the page scans itself: its first addresses equal the device's rows
+  const rec = (ty) => recs.find((r) => r.type === ty).bytes;
+  const devAddr = (name) => (dev.find((d) => d[0] === name) || [])[1];
+  ok(X.childAddrs(rec(0x74), 'btc-tr', 0, 0, 1)[0] === devAddr('BTC taproot'), 'taproot wallet address 0 == device');
+  ok(X.childAddrs(rec(0x75), 'ltc-wpkh', 0, 0, 1)[0] === devAddr('LTC'), 'LTC segwit wallet address 0 == device');
+  ok(X.childAddrs(rec(0x76), 'ltc-pkh', 0, 0, 1)[0] === devAddr('LTC legacy (L..)'), 'LTC legacy wallet address 0 == device');
+  const ethChain = rec(0x77);
+  ok(X.walletAddr('eth', X.ckdPub(ethChain.slice(36, 69), ethChain.slice(4, 36), 0).pub) === dev[0][1], 'MetaMask account 1 == device ETH row');
+  try {
+    const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();e=b.Bip44.FromSeed(s,b.Bip44Coins.ETHEREUM).Purpose().Coin().Account(0).Change(b.Bip44Changes.CHAIN_EXT);print(e.AddressIndex(1).PublicKey().ToAddress());print(e.AddressIndex(4).PublicKey().ToAddress());t=b.Bip86.FromSeed(s,b.Bip86Coins.BITCOIN).Purpose().Coin().Account(0);print(t.Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(4).PublicKey().ToAddress());print(t.Change(b.Bip44Changes.CHAIN_INT).AddressIndex(2).PublicKey().ToAddress())", m], { encoding: 'utf8' }).trim().split('\n');
+    ok(X.walletAddr('eth', X.ckdPub(ethChain.slice(36, 69), ethChain.slice(4, 36), 1).pub) === ref[0], 'MetaMask account 2 == bip_utils');
+    ok(X.walletAddr('eth', X.ckdPub(ethChain.slice(36, 69), ethChain.slice(4, 36), 4).pub) === ref[1], 'MetaMask account 5 == bip_utils');
+    ok(X.childAddrs(rec(0x74), 'btc-tr', 0, 4, 1)[0] === ref[2], 'taproot receive #4 == bip_utils');
+    ok(X.childAddrs(rec(0x74), 'btc-tr', 1, 2, 1)[0] === ref[3], 'taproot change #2 == bip_utils');
+  } catch (e) { console.log('(bip_utils not available: skipped MetaMask / taproot index checks)'); }
   for (const r of recs) types.add(r.type);
 }
 console.log('mnemonics: ' + mns.length + ', record types: ' + types.size + ', checks: ' + checks + ', failures: ' + fails);

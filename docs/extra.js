@@ -119,7 +119,29 @@
     if (A[0] === B[0]) { if (mod(A[1] + B[1]) === 0n) return null; const l = mod(3n * A[0] * A[0] * inv(2n * A[1])); const x = mod(l * l - 2n * A[0]); return [x, mod(l * (A[0] - x) - A[1])]; }
     const l = mod((B[1] - A[1]) * inv(B[0] - A[0])); const x = mod(l * l - A[0] - B[0]); return [x, mod(l * (A[0] - x) - A[1])];
   }
-  function pmul(k, P) { let R = null, Q = P; while (k > 0n) { if (k & 1n) R = padd(R, Q); Q = padd(Q, Q); k >>= 1n; } return R; }
+  // k * P in Jacobian coordinates (one inversion at the end instead of one per step):
+  // a wallet scan derives dozens of addresses, on a phone, while the page stays responsive.
+  function pmul(k, P) {
+    let X = 0n, Y = 1n, Z = 0n;                                           // the point at infinity
+    const double = () => {
+      if (Z === 0n) return;
+      const YY = mod(Y * Y), S = mod(4n * X * YY), M = mod(3n * X * X), X3 = mod(M * M - 2n * S);
+      const Y3 = mod(M * (S - X3) - 8n * YY * YY), Z3 = mod(2n * Y * Z);
+      X = X3; Y = Y3; Z = Z3;
+    };
+    const addAffine = (x2, y2) => {                                       // (X,Y,Z) += (x2,y2)
+      if (Z === 0n) { X = x2; Y = y2; Z = 1n; return; }
+      const ZZ = mod(Z * Z), U2 = mod(x2 * ZZ), S2 = mod(y2 * ZZ * Z), Hh = mod(U2 - X), r = mod(S2 - Y);
+      if (Hh === 0n) { if (r === 0n) double(); else Z = 0n; return; }
+      const HH = mod(Hh * Hh), HHH = mod(HH * Hh), V = mod(X * HH);
+      const X3 = mod(r * r - HHH - 2n * V), Y3 = mod(r * (V - X3) - Y * HHH), Z3 = mod(Z * Hh);
+      X = X3; Y = Y3; Z = Z3;
+    };
+    for (let i = BigInt(k.toString(2).length) - 1n; i >= 0n; i--) { double(); if ((k >> i) & 1n) addAffine(P[0], P[1]); }
+    if (Z === 0n) return null;
+    const zi = inv(Z), zi2 = mod(zi * zi);
+    return [mod(X * zi2), mod(Y * zi2 * zi)];
+  }
   const big = (b) => { let v = 0n; for (const x of b) v = (v << 8n) | BigInt(x); return v; };
   const be32 = (v) => { const o = new Uint8Array(32); for (let i = 31; i >= 0; i--) { o[i] = Number(v & 0xffn); v >>= 8n; } return o; };
   function decompress(pub33) { const x = big(pub33.slice(1)); let y = 1n, b = mod(x * x * x + 7n), e = (SP + 1n) / 4n; while (e) { if (e & 1n) y = mod(y * b); b = mod(b * b); e >>= 1n; } if ((y & 1n) !== BigInt(pub33[0] & 1)) y = SP - y; return [x, y]; }
@@ -132,6 +154,47 @@
   }
   // First receive address hash (m/.../0/0) of an account xpub record (0x70-0x73 layout).
   function firstPkh(rec) { const c = ckdPub(rec.slice(36, 69), rec.slice(4, 36), 0); return hash160(ckdPub(c.pub, c.chain, 0).pub); }
+
+  // Address of a child public key, per wallet kind.
+  function taprootKey(pub33) {                                           // BIP86: Q = P + H_TapTweak(P)G, P with even y
+    let P = decompress(pub33); if (P[1] & 1n) P = [P[0], SP - P[1]];
+    const xo = be32(P[0]), tag = sha256(utf8('TapTweak'));
+    const t = big(sha256(cat(tag, tag, xo))); if (t >= SN) throw new Error('invalid tweak');
+    return be32(padd(pmul(t, SG), P)[0]);
+  }
+  function walletAddr(kind, pub33) {
+    if (kind === 'btc-tr') return bech32('bc', [1, ...toWords(taprootKey(pub33))], true);
+    if (kind === 'btc-wpkh') return bech32('bc', [0, ...toWords(hash160(pub33))]);
+    if (kind === 'ltc-wpkh') return bech32('ltc', [0, ...toWords(hash160(pub33))]);
+    if (kind === 'ltc-pkh') return base58check(cat(Uint8Array.of(0x30), hash160(pub33)));
+    if (kind === 'eth') { const P = decompress(pub33); return eip55(keccakAddr(P)); }
+    throw new Error('unknown kind ' + kind);
+  }
+  function keccakAddr(P) {
+    const D = (typeof self !== 'undefined' && self.SeedDecode) || (typeof require === 'function' ? require('./decode.js') : null);
+    return D.keccak256(cat(be32(P[0]), be32(P[1]))).slice(12);
+  }
+  // Child addresses of an account key (rec: fp || chain code || pubkey), chain 0 = receive, 1 = change.
+  function childAddrs(rec, kind, chainIdx, from, count) {
+    const c = ckdPub(rec.slice(36, 69), rec.slice(4, 36), chainIdx), out = [];
+    for (let i = from; i < from + count; i++) out.push(walletAddr(kind, ckdPub(c.pub, c.chain, i).pub));
+    return out;
+  }
+  // Gap-limit scan: walk receive and change addresses in batches until `gap` unused ones in a row.
+  // query(addr) -> { used: bool, sats: BigInt }. Returns { sats, used, first }.
+  async function scanWallet(rec, kind, query, gaps) {
+    let sats = 0n, used = 0;
+    for (const [chainIdx, gap] of [[0, gaps[0]], [1, gaps[1]]]) {
+      let i = 0, empty = 0;
+      while (empty < gap && i < 400) {
+        const batch = childAddrs(rec, kind, chainIdx, i, 5);
+        const res = await Promise.all(batch.map(query));
+        for (const r of res) { if (r.used) { used++; empty = 0; sats += r.sats; } else empty++; }
+        i += 5;
+      }
+    }
+    return { sats, used, first: childAddrs(rec, kind, 0, 0, 1)[0] };
+  }
 
   // BLAKE2b with any output length (RFC 7693), BigInt lanes; inputs here are tiny.
   const B2IV = ['6a09e667f3bcc908', 'bb67ae8584caa73b', '3c6ef372fe94f82b', 'a54ff53a5f1d36f1', '510e527fade682d1', '9b05688c2b3e6c1f', '1f83d9abfb41bd6b', '5be0cd19137e2179'].map((x) => BigInt('0x' + x));
@@ -457,6 +520,46 @@
           if (type === 0x73) add('Bitcoin Cash wallet (every address)', shown, 'https://blockchair.com/bitcoin-cash/xpub/', wallet('bch', 'normal', 'BCH', 'bitcoin-cash'), { replaces: ['Bitcoin Cash (BCH wallets)'] });
           break;
         }
+        // ---- whole wallets the page scans itself (no xpub service with browser access) ----
+        case 0x74: case 0x75: case 0x76: {
+          if (b.length !== 69) break;
+          const [kind, name, replaces, symbol, price, apis, explorer] = {
+            0x74: ['btc-tr', 'Bitcoin taproot wallet (every address)', 'Bitcoin taproot (bc1p)', 'BTC', 'bitcoin', ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'], 'https://mempool.space/address/'],
+            0x75: ['ltc-wpkh', 'Litecoin wallet (segwit, every address)', 'Litecoin', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/'], 'https://litecoinspace.org/address/'],
+            0x76: ['ltc-pkh', 'Litecoin legacy wallet (every address)', 'Litecoin legacy (L...)', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/'], 'https://litecoinspace.org/address/'],
+          }[type];
+          const first = childAddrs(b, kind, 0, 0, 1)[0];
+          const query = async (a) => {
+            const j = await firstOk(apis, (u) => fetchJSON(u + a));
+            const c = j.chain_stats, m = j.mempool_stats;
+            if (!c || !m) throw new Error('unexpected answer');
+            return { used: c.tx_count + m.tx_count > 0, sats: BigInt(c.funded_txo_sum) - BigInt(c.spent_txo_sum) + BigInt(m.funded_txo_sum) - BigInt(m.spent_txo_sum) };
+          };
+          add(name, first, explorer, async () => {
+            const w = await scanWallet(b, kind, query, [10, 5]);
+            return { holdings: [h(symbol, units(w.sats, 8), price)], others: 0, partial: null, note: w.used ? w.used + ' addresses used' : null };
+          }, { replaces: [replaces] });
+          break;
+        }
+        // ---- MetaMask accounts 2-5 (m/44'/60'/0'/0/1..4) on the biggest EVM networks ----
+        case 0x77: {
+          if (b.length !== 69) break;
+          const nets = ['eth', 'base', 'arb', 'op', 'polygon', 'bsc', 'avax', 'linea', 'zksync', 'scroll'].map(K.evm).filter(Boolean);
+          for (let n = 1; n <= 4; n++) {
+            const a = walletAddr('eth', ckdPub(b.slice(36, 69), b.slice(4, 36), n).pub);
+            add('Ethereum account ' + (n + 1) + ' (MetaMask), 10 networks', a, 'https://debank.com/profile/', async () => {
+              const rs = await Promise.allSettled(nets.map((c) => K.checkEvm(c, a)));
+              const holdings = []; let failed = 0;
+              rs.forEach((r, i) => {
+                if (r.status !== 'fulfilled') { failed++; return; }
+                for (const x of r.value.holdings) if (x.amount > 0) holdings.push(h(x.symbol + ' on ' + nets[i].name, x.amount, x.price));
+              });
+              if (failed === nets.length) throw new Error('no network answered');
+              return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others: 0, partial: failed ? failed + ' of ' + nets.length + ' networks did not answer' : null };
+            });
+          }
+          break;
+        }
         default: break;   // a newer device's record type; skipped by design
       }
     }
@@ -467,5 +570,5 @@
   // request says nothing about which coins a wallet holds.
   const PRICE_IDS = ['bitcoin', 'litecoin', 'bitcoin-cash', 'bitcoin-cash-sv', 'ecash', 'dash', 'zcash', 'digibyte', 'ravencoin', 'ethereum-classic', 'celo', 'harmony', 'kaia', 'vechain', 'vethor-token', 'theta-token', 'theta-fuel', 'zilliqa', 'icon', 'filecoin', 'kaspa', 'ergo', 'internet-computer', 'avalanche-2', 'terra-luna-2', 'terra-luna', 'terrausd', 'kava', 'secret', 'crypto-com-chain', 'band-protocol', 'thorchain', 'cacao', 'bitsong', 'desmos', 'persistence', 'hash-2', 'tx', 'agoric', 'solana', 'stellar', 'tezos', 'near', 'algorand', 'elrond-erd-2', 'hedera-hashgraph', 'iota', 'the-open-network', 'cardano', 'usd-coin', 'tether'];
 
-  return { build, firstPkh, ripemd160, hmacSha512, sha512, ckdPub, PRICE_IDS, addr, cashaddr, base58, base58check, base32, bech32, toWords, sha256, sha224, sha512_256, blake2b, crc32, crc16xmodem, hex };
+  return { build, firstPkh, walletAddr, childAddrs, taprootKey, ripemd160, hmacSha512, sha512, ckdPub, PRICE_IDS, addr, cashaddr, base58, base58check, base32, bech32, toWords, sha256, sha224, sha512_256, blake2b, crc32, crc16xmodem, hex };
 });

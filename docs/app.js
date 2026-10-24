@@ -795,7 +795,7 @@
     }
     state.results = all.filter((r) => !drop.has(r));
     await showVerdict(state.results);
-    $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR and scanned whole Bitcoin wallets. The verdict above now covers ' + state.results.length + '.';
+    $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR, including whole Bitcoin and Litecoin wallets and MetaMask accounts 2 to 5. The verdict above now covers ' + state.results.length + '.';
     $('#verdict').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
   }
   function startScan() {

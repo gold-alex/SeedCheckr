@@ -148,8 +148,11 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
   mnemonic_to_seed(mnemonic, passphrase, seed, NULL);
 
   // ---- ETH (and INJ, which is the ETH key with a bech32 wrapper) ----
-  { uint32_t p[] = { 44|H, 60|H, 0|H, 0, 0 };
-    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+  { uint32_t p[] = { 44|H, 60|H, 0|H, 0 };
+    if (cu_derive(&n, seed, SECP256K1_NAME, p, 4)) goto done;          // m/44'/60'/0'/0: MetaMask's address chain
+    cu_xpub_record(&out[0], 0x77, &n, 0);                               // the page derives accounts 2, 3, ... from it
+    if (!hdnode_private_ckd(&n, 0)) goto done;
+    hdnode_fill_public_key(&n);
     uint8_t a[20]; cu_eth_addr_bytes(&n, a);
     cu_eth_checksum(a, out[0].addr);          k = 1;  if (progress) progress(k, chains_count());
     cu_bech32_bytes("inj", a, 20, out[16].addr);
@@ -188,8 +191,15 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     k = 4; if (progress) progress(k, chains_count()); }
 
   // ---- LTC native segwit ----
-  { uint32_t p[] = { 84|H, 2|H, 0|H, 0, 0 };
-    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+  { uint32_t p[] = { 84|H, 2|H };
+    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    uint32_t fp = hdnode_fingerprint(&parent);
+    n = parent;
+    if (!hdnode_private_ckd(&n, 0|H)) goto done;
+    hdnode_fill_public_key(&n);
+    cu_xpub_record(&out[4], 0x75, &n, fp);                              // whole LTC segwit wallet
+    if (!hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
+    hdnode_fill_public_key(&n);
     uint8_t pkh[20]; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, pkh);
     segwit_addr_encode(out[4].addr, "ltc", 0, pkh, 20);
     memcpy(out[4].raw, pkh, 20); out[4].rawlen = 20;

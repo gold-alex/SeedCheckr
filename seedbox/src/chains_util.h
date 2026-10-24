@@ -21,7 +21,7 @@ void cu_eth_checksum(const uint8_t a[20], char* out);                // EIP-55 s
 void cu_bech32_bytes(const char* hrp, const uint8_t* in, size_t inlen, char* out);   // bech32 (not m) of raw bytes
 // Fill one row's labels. Call before writing addr/raw.
 void cu_row(ChainAddr* r, const char* name, const char* path, const char* link, uint8_t ext);
-// Account-level extended public key as a second record on row r: fp (4, big endian) || chain code (32) ||
+// Extended public key (account level; 0x77 is the ETH address-chain node) as a second record on row r: fp (4, big endian) || chain code (32) ||
 // compressed public key (33). node must have its public key filled; fp is its parent's fingerprint.
 void cu_xpub_record(ChainAddr* r, uint8_t type, const HDNode* node, uint32_t fp);
 
