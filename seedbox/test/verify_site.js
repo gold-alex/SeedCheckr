@@ -5,7 +5,7 @@
 //   payload -> docs/decode.js (the web page's code) -> must give the same 20 addresses
 //   URL + payload -> test_qr (the device's QR encoder) -> jsQR (independent reader) -> same URL
 //
-// usage: node verify_site.js [N]    N random 12-word + N random 24-word mnemonics (default 5)
+// usage: node verify_site.js [N]    N random mnemonics of each length, 12/15/18/21/24 words (default 5)
 // needs: ./build.sh first; `npm install` in this folder for the jsQR step (skipped if missing)
 'use strict';
 const { execFileSync } = require('child_process');
@@ -68,7 +68,7 @@ function decodeGrid(text) {
 
 (async () => {
   let fails = 0, total = 0, maxVersion = 0, maxLen = 0;
-  for (const entBytes of [16, 32]) for (let i = 0; i < N; i++) {
+  for (const entBytes of [16, 20, 24, 28, 32]) for (let i = 0; i < N; i++) {
     const m = mnemonic(entBytes);
     const out = execFileSync(path.join(here, 'test_portfolio'), [m], { encoding: 'utf8' }).trim().split('\n');
     const rows = Object.fromEntries(out.map(l => l.split('|')));
@@ -102,6 +102,6 @@ function decodeGrid(text) {
       if (r.data !== t) { fails++; console.log('FAIL plain QR v' + r.version + ': ' + t.slice(0, 30)); }
     }
   }
-  console.log(`mnemonics: ${2 * N}, checks: ${total}, failures: ${fails}, longest payload: ${maxLen} chars, largest portfolio QR: v${maxVersion || '?'}`);
+  console.log(`mnemonics: ${5 * N}, checks: ${total}, failures: ${fails}, longest payload: ${maxLen} chars, largest portfolio QR: v${maxVersion || '?'}`);
   process.exit(fails ? 1 : 0);
 })();

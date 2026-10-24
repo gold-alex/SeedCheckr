@@ -6,7 +6,7 @@
  *           Bourns PEC11R rotary encoder with push switch
  *
  * Flow:
- *   1. Type a 12 or 24 word BIP39 seed in with the knob.
+ *   1. Type a 12, 15, 18, 21 or 24 word BIP39 seed in with the knob.
  *   2. The device derives public addresses for 20 chains (one EVM address
  *      covers Ethereum, Base, Arbitrum, Polygon, BSC, Optimism, Avalanche...).
  *   3. The seed is zeroed from RAM the moment derivation finishes.
@@ -544,10 +544,10 @@ static bool deriveFromEntered(int nwords) {
 // ---------------- Phrase overview ----------------
 // The whole phrase on one screen, two columns, numbered down the left column then
 // the right. 12 words get 19 px rows and letters drawn double height (6 x 16 px, so
-// 8-letter words still fit a column); 24 words get normal-size rows. Every slot that
-// slot can be selected, filled or not, in any order; empty ones show as grey
-// dashes. Once every slot is filled an extra item sits above word 1, drawn in
-// the title bar: derive. Each cell paints its own background, so nothing flashes.
+// 8-letter words still fit a column); 15/18/21/24 words get normal-size letters in
+// 14/12/10/9 px rows. Every slot can be selected, filled or not, in any order;
+// empty ones show as grey dashes. Once every slot is filled an extra item sits
+// above word 1, drawn in the title bar: derive. Each cell paints its own background, so nothing flashes.
 #define PS_DERIVE  (-1)
 #define PS_BACK    (-2)
 #define PS_TIMEOUT (-3)
@@ -556,7 +556,7 @@ static bool deriveFromEntered(int nwords) {
 static int phraseScreen(int nwords, int cur) {
   const bool full = (haveCount(nwords) == nwords);
   const int cols = 2, rows = (nwords + cols - 1) / cols;
-  const int y0 = 14, rh = (SCR_H - y0) / rows;              // 19 px for 12 words, 9 for 24
+  const int y0 = 14, rh = (SCR_H - y0) / rows;              // 19 px for 12 words, 14/12/10 for 15/18/21, 9 for 24
   const int sy = (rh >= 18) ? 2 : 1;                        // letter height multiplier
   const int cellW = (SCR_W - 4) / cols;                     // 78 landscape
   const int lo = full ? PS_DERIVE : 0, hi = nwords - 1;
@@ -595,6 +595,8 @@ static int phraseScreen(int nwords, int cur) {
   tft.fillRect(2 + cols * cellW, y0, SCR_W - 2 - cols * cellW, rows * rh, C_BG);
   tft.fillRect(0, y0 + rows * rh, SCR_W, SCR_H - y0 - rows * rh, C_BG);
   for (int i = 0; i < nwords; i++) cell(i, i == cur);
+  for (int i = nwords; i < rows * cols; i++)               // 15 and 21 words leave the last cell empty
+    tft.fillRect(2 + (i / rows) * cellW, y0 + (i % rows) * rh, cellW, rh, C_BG);
 
   int prev = cur, shown = -9;
   for (;;) {
@@ -809,7 +811,8 @@ static bool checksumOk(int nwords) {
 
 // Entry: one word screen at a time, the phrase overview whenever the user asks for
 // it and once every slot is in. The checksum only catches 15 of 16 wrong words on a
-// 12-word seed (255 of 256 on 24), so the user eyeballs the phrase before deriving.
+// 12-word seed (31/32, 63/64, 127/128 on 15/18/21; 255 of 256 on 24), so the user
+// eyeballs the phrase before deriving.
 // A wrong checksum sends them back to the overview to fix a word, not to the menu.
 static bool enterSeed(int nwords) {
   char prefix[8] = "";
@@ -902,13 +905,21 @@ void setup() {
 }
 
 void loop() {
-  static const char* const items[] = { "12-word seed", "24-word seed", "About" };
+  // 12 and 24 words cover nearly every wallet, so they stay one press away; the rare
+  // 15/18/21 sit behind "Other length" so the menu fits without scrolling.
+  static const char* const items[] = { "12-word seed", "24-word seed", "Other length", "About" };
+  static const char* const other[] = { "15-word seed", "18-word seed", "21-word seed" };
   int s = (SCR_W >= 150) ? 2 : 1;        // double-size type; 12 chars x 12 px fit the 160 px screen
-  int sel = runMenu("SeedBox", items, 3, 0, s);
+  int sel = runMenu("SeedBox", items, 4, 0, s);
   switch (sel) {
     case 0: if (enterSeed(12)) browseAddresses(); break;
     case 1: if (enterSeed(24)) browseAddresses(); break;
-    case 2: message("SeedBox v0.4", "20 chains, one-scan QR", "seed wiped after derive", C_FG); break;
+    case 2: {
+      int o = runMenu("Seed length", other, 3, 0, s);   // hold = back to the main menu
+      if (o >= 0 && enterSeed(15 + 3 * o)) browseAddresses();
+      break;
+    }
+    case 3: message("SeedBox v0.4", "20 chains, one-scan QR", "seed wiped after derive", C_FG); break;
     default: break;
   }
 }

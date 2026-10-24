@@ -89,14 +89,16 @@ static void sha256(const uint8_t* data, size_t len, uint8_t out[32]) {
 
 // ============================================================
 // BIP39
-//   entropy (16 or 32 bytes) -> 12 or 24 word indices, and back.
+//   entropy (16/20/24/28/32 bytes) -> 12/15/18/21/24 word indices, and back.
 //   checksum = first ENT/32 bits of SHA256(entropy), appended to entropy,
 //   then the whole bit string is split into 11-bit word indices.
 // ============================================================
-static int bip39_words_for(int nbytes) { return nbytes == 16 ? 12 : nbytes == 32 ? 24 : 0; }
-static int bip39_bytes_for(int nwords) { return nwords == 12 ? 16 : nwords == 24 ? 32 : 0; }
+//   Every length fits the 33-byte bit buffers below: at most 32 entropy bytes plus
+//   8 checksum bits, which always sit in the byte right after the entropy.
+static int bip39_words_for(int nbytes) { return (nbytes >= 16 && nbytes <= 32 && nbytes % 4 == 0) ? nbytes * 3 / 4 : 0; }
+static int bip39_bytes_for(int nwords) { return (nwords >= 12 && nwords <= 24 && nwords % 3 == 0) ? nwords * 4 / 3 : 0; }
 
-// Returns number of words written to idx (12 or 24), or 0 on bad size.
+// Returns number of words written to idx (12, 15, 18, 21 or 24), or 0 on bad size.
 static inline int bip39_encode(const uint8_t* entropy, int nbytes, uint16_t* idx) {
   int nwords = bip39_words_for(nbytes);
   if (!nwords) return 0;
@@ -128,7 +130,7 @@ static bool bip39_decode(const uint16_t* idx, int nwords, uint8_t* entropy_out) 
       if ((idx[w] >> (10 - b)) & 1) bits[bit >> 3] |= (uint8_t)(0x80 >> (bit & 7));
     }
   uint8_t h[32]; sha256(bits, nbytes, h);
-  int csbits = nbytes / 4;                           // ENT/32: 4 bits for 12 words, 8 for 24
+  int csbits = nbytes / 4;                           // ENT/32: 4 bits for 12 words, 5/6/7 for 15/18/21, 8 for 24
   uint8_t mask = (uint8_t)(0xFF << (8 - csbits));
   bool ok = (bits[nbytes] & mask) == (h[0] & mask);
   if (ok) memcpy(entropy_out, bits, nbytes);

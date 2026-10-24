@@ -33,8 +33,16 @@ int main() {
     sha256_final(&s, h);
     CHECK(hex(h, 32) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0", "sha256 million a"); }
 
+  // word count <-> entropy size, every BIP39 length and nothing else
+  for (int nb = 0; nb <= 40; nb++) {
+    int nw = bip39_words_for(nb);
+    bool valid = nb >= 16 && nb <= 32 && nb % 4 == 0;
+    CHECK(valid ? (nw == nb * 3 / 4 && bip39_bytes_for(nw) == nb) : nw == 0, "bip39_words_for");
+  }
+  for (int nw = 0; nw <= 30; nw++) CHECK((nw % 3 == 0 && nw >= 12 && nw <= 24) == (bip39_bytes_for(nw) != 0), "bip39_bytes_for");
+
   // BIP39 vectors from stdin
-  std::string line; int n = 0;
+  std::string line; int n = 0, byLen[25] = {0};
   while (std::getline(std::cin, line)) {
     if (line.empty()) continue;
     std::istringstream ss(line);
@@ -56,9 +64,9 @@ int main() {
     char d[24*4+1]; seedqr_digits(idx, nw, d);
     CHECK((int)strlen(d) == nw*4, "seedqr length");
     for (int i = 0; i < nw; i++) CHECK(atoi(std::string(d + 4*i, 4).c_str()) == idx[i], "seedqr digits");
-    n++;
+    n++; if (nw >= 12 && nw <= 24) byLen[nw]++;
   }
-  printf("vectors checked: %d\n", n);
+  printf("vectors checked: %d (12w %d, 15w %d, 18w %d, 21w %d, 24w %d)\n", n, byLen[12], byLen[15], byLen[18], byLen[21], byLen[24]);
 
   // prefix search
   uint16_t out[32]; int total;

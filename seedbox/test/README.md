@@ -3,15 +3,15 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     ./build.sh      # trezor-crypto, chains.c, portfolio.c, qrcodegen.c -> test_chains, test_portfolio, test_qr
 
     # core: SHA-256, BIP39 checksum, prefix search
-    python3 -c "import os;from mnemonic import Mnemonic as M;m=M('english');[print(e.hex(),m.to_mnemonic(e)) for e in [os.urandom(16) for _ in range(100)]+[os.urandom(32) for _ in range(100)]]" > vectors.txt
+    python3 -c "import os;from mnemonic import Mnemonic as M;m=M('english');[print(e.hex(),m.to_mnemonic(e)) for n in (16,20,24,28,32) for e in [os.urandom(n) for _ in range(100)]]" > vectors.txt
     g++ -std=c++17 -O2 -o test_seedcore test_seedcore.cpp && ./test_seedcore < vectors.txt
 
-    # chains: every address vs bip_utils, N random 12-word + N random 24-word mnemonics
-    ./compare.sh 10
+    # chains: every address vs bip_utils, N random mnemonics of each length (12/15/18/21/24 words)
+    ./compare.sh 10             # or PYTHON=/path/to/venv/bin/python ./compare.sh 10
 
     # one-scan QR, end to end: device payload -> docs/decode.js -> the same 20 addresses,
     # then URL + payload -> the device's QR encoder -> jsQR (an unrelated reader) -> the same URL
-    npm install && node verify_site.js 10
+    npm install && node verify_site.js 10     # N mnemonics of each length, 12 to 24 words
 
     # the page against the live networks: runs docs/app.js unchanged with a stub DOM, prints the
     # verdict and case file, and checks every endpoint's CORS answer for a github.io origin
