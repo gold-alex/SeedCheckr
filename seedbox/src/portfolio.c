@@ -101,14 +101,19 @@ static int ext_walk(const ChainAddr* rows, int n, uint32_t* crc, uint8_t* dst, i
   uint32_t c = 0xFFFFFFFFu;
   int off = 0;
   for (int r = 0; r < n; r++) {
-    if (!rows[r].ext) continue;
-    int len = rows[r].rawlen;
-    if (len > (int)sizeof rows[r].raw) len = (int)sizeof rows[r].raw;
-    for (int k = -2; k < len; k++, off++) {
-      uint8_t b = k == -2 ? rows[r].ext : k == -1 ? (uint8_t)len : rows[r].raw[k];
-      c ^= b;
-      for (int bit = 0; bit < 8; bit++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
-      if (dst && off >= from && off < to) dst[off - from] = b;
+    for (int part = 0; part < 2; part++) {       // the row's record, then its account xpub record if any
+      uint8_t type = part ? rows[r].ext2 : rows[r].ext;
+      if (!type) continue;
+      const uint8_t* src = part ? rows[r].xraw : rows[r].raw;
+      int len = part ? rows[r].xlen : rows[r].rawlen;
+      int cap = part ? (int)sizeof rows[r].xraw : (int)sizeof rows[r].raw;
+      if (len > cap) len = cap;
+      for (int k = -2; k < len; k++, off++) {
+        uint8_t b = k == -2 ? type : k == -1 ? (uint8_t)len : src[k];
+        c ^= b;
+        for (int bit = 0; bit < 8; bit++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
+        if (dst && off >= from && off < to) dst[off - from] = b;
+      }
     }
   }
   if (crc) *crc = ~c;

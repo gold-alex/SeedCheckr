@@ -123,7 +123,14 @@ static const ChainInfo CHAINS[] = {
 int chains_count(void) { return N_CHAINS + ext_utxo_count() + ext_cosmos_count() + ext_ed_count(); }
 
 void cu_row(ChainAddr* r, const char* name, const char* path, const char* link, uint8_t ext) {
-  r->name = name; r->path = path; r->link = link; r->ext = ext; r->addr[0] = 0; r->rawlen = 0;
+  r->name = name; r->path = path; r->link = link; r->ext = ext; r->addr[0] = 0; r->rawlen = 0; r->ext2 = 0; r->xlen = 0;
+}
+
+void cu_xpub_record(ChainAddr* r, uint8_t type, const HDNode* node, uint32_t fp) {
+  r->xraw[0] = fp >> 24; r->xraw[1] = fp >> 16; r->xraw[2] = fp >> 8; r->xraw[3] = fp;
+  memcpy(r->xraw + 4, node->chain_code, 32);
+  memcpy(r->xraw + 36, node->public_key, 33);
+  r->xlen = 69; r->ext2 = type;
 }
 
 static const char* COSMOS_HRP[] = { "cosmos", "osmo", "celestia", "dydx", "sei", "akash", "juno", "stars" };
@@ -157,6 +164,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
     hdnode_fill_public_key(&n);
     hdnode_serialize_public(&n, fp, 0x04b24746, out[1].addr, CHAIN_ADDR_MAX);   // "zpub"
+    cu_xpub_record(&out[1], 0x70, &n, fp);        // whole segwit wallet, scanned by the page
     k = 2; if (progress) progress(k, chains_count());
     if (!hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
     hdnode_fill_public_key(&n);
@@ -173,6 +181,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
     hdnode_fill_public_key(&n);
     hdnode_serialize_public(&n, fp, 0x0488B21E, out[3].addr, CHAIN_ADDR_MAX);   // "xpub"
+    cu_xpub_record(&out[3], 0x71, &n, fp);        // whole legacy wallet (and its BCH fork copy)
     if (!hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;   // first legacy address, raw only
     hdnode_fill_public_key(&n);
     ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, out[3].raw); out[3].rawlen = 20;

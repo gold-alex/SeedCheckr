@@ -38,6 +38,11 @@ for (const n of [4, 20, 28, 32]) {
 }
 ok(X.crc32(Buffer.from('123456789')) === 0xcbf43926, 'crc32 check value');
 ok(X.crc16xmodem(Buffer.from('123456789')) === 0x31c3, 'crc16-xmodem check value');
+for (let i = 0; i < 30; i++) {
+  const m = randomBytes(i * 7 % 200), k = randomBytes(i % 150);
+  ok(X.hex(X.ripemd160(m)) === createHash('ripemd160').update(m).digest('hex'), 'ripemd160 len ' + m.length);
+  ok(X.hex(X.hmacSha512(k, m)) === require('crypto').createHmac('sha512', k).update(m).digest('hex'), 'hmac-sha512');
+}
 
 // ---- device frames -> page records -> page addresses == device addresses ----
 const WORDS = fs.readFileSync(path.join(__dirname, '..', 'bip39_words.h'), 'utf8').match(/"([a-z]+)"/g).map((w) => w.slice(1, -1));
@@ -53,7 +58,7 @@ const N = parseInt(process.argv[2] || '2', 10);
 const TV = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const mns = [TV];
 for (const e of [16, 20, 24, 28, 32]) for (let i = 0; i < N; i++) mns.push(mnemonic(e));
-let types = new Set();
+let types = new Set(), prev70 = null;
 for (const m of mns) {
   const dev = execFileSync(path.join(__dirname, 'test_chains'), [m], { encoding: 'utf8' }).trim().split('\n').map((l) => l.split('|'));
   const frames = execFileSync(path.join(__dirname, 'test_portfolio'), [m], { encoding: 'utf8' }).split('\n').filter((l) => l.startsWith('FRAME|')).map((l) => l.slice(6));
@@ -63,13 +68,31 @@ for (const m of mns) {
   ok(res && res.done, 'frames assemble');
   const recs = S.records(res.bytes);
   const ext = dev.slice(20);                                                          // device rows after the 20 core rows
-  ok(recs.length === ext.length, 'one record per device extension row (' + recs.length + ' vs ' + ext.length + ')');
+  const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x73);                  // account xpub records
+  ok(recs.length - acct.length === ext.length, 'one record per device extension row (' + (recs.length - acct.length) + ' vs ' + ext.length + ')');
+  ok(acct.length === 4, 'four account xpub records');
   const built = X.build(recs, K);
   const pageAddrs = new Set(built.map((c) => c.addr.replace(/^[PX]-/, '')));
   for (const [name, a] of ext) {
     const want = a.replace(/^[PX]-/, '');
     ok(pageAddrs.has(want), 'page rebuilds device row "' + name + '" = ' + a);
   }
+  // the zpub and legacy xpub the page builds are the ones the device shows on rows 1 and 3
+  ok(pageAddrs.has(dev[1][1]), 'page zpub == device "' + dev[1][0] + '"');
+  ok(pageAddrs.has(dev[3][1]), 'page xpub == device "' + dev[3][0] + '"');
+  // the nested ypub and the BCH xpub are not shown on the device: compare with bip_utils
+  try {
+    const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();print(b.Bip49.FromSeed(s,b.Bip49Coins.BITCOIN).Purpose().Coin().Account(0).PublicKey().ToExtended());print(b.Bip44.FromSeed(s,b.Bip44Coins.BITCOIN_CASH).Purpose().Coin().Account(0).PublicKey().ToExtended())", m], { encoding: 'utf8' }).trim().split('\n');
+    ok(pageAddrs.has(ref[0]), 'page ypub == bip_utils ' + ref[0]);
+    ok(pageAddrs.has(ref[1]), 'page BCH xpub == bip_utils ' + ref[1]);
+  } catch (e) { console.log('(bip_utils not available: skipped the ypub / BCH xpub check)'); }
+  // binding: the 0x70 account key derives the Portfolio QR's first segwit address (m/84'/0'/0'/0/0)
+  const v1 = execFileSync(path.join(__dirname, 'test_portfolio'), [m], { encoding: 'utf8' }).split('\n').find((l) => l.startsWith('PORTFOLIO|')).split('|')[1];
+  const pv1 = globalThis.SeedDecode.parsePayload(v1);
+  const r70 = recs.find((r) => r.type === 0x70);
+  ok(X.hex(X.firstPkh(r70.bytes)) === X.hex(pv1.btc), 'moving QR binds to its own Portfolio QR');
+  if (prev70) ok(X.hex(X.firstPkh(prev70)) !== X.hex(pv1.btc), "another seed's moving QR does not bind");
+  prev70 = r70.bytes;
   for (const r of recs) types.add(r.type);
 }
 console.log('mnemonics: ' + mns.length + ', record types: ' + types.size + ', checks: ' + checks + ', failures: ' + fails);

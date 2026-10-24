@@ -315,19 +315,44 @@ static uint8_t qrCode[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
 static uint8_t qrTemp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
 
 // Paints qrCode centered with a 1 module quiet zone.
+// Streams the code to the panel in one pass, top to bottom, one pixel row at a time:
+// every pixel of the square is written exactly once (white or black), so a new code
+// replaces the old one without a blank square in between. At the display's 32 MHz SPI
+// a version 10 code (118 x 118 px) is about 28 KB, roughly 10 ms on the wire, against
+// ~1700 separate small rectangles after a white fill before. A phone camera filming the
+// moving QR therefore almost never catches a half-drawn frame. gQrDrawUs keeps the last
+// measured time so the "more chains" view can show it.
+static uint32_t gQrDrawUs = 0;
 static void paintQR() {
+  uint32_t t0 = micros();
   int size = qrcodegen_getSize(qrCode);
-  int cells = size + 2;
-  int s = (SCR_W < SCR_H ? SCR_W : SCR_H) / cells;
+  int cells = size + 2;                                    // 1 module of quiet zone each side
+  int sq = (SCR_W < SCR_H ? SCR_W : SCR_H);
+  int s = sq / cells;
   int px = s * cells;
   int x0 = (SCR_W - px) / 2, y0 = (SCR_H - px) / 2;
-  int sq = (SCR_W < SCR_H ? SCR_W : SCR_H);
-  tft.fillRect((SCR_W - sq) / 2, (SCR_H - sq) / 2, sq, sq, ST77XX_WHITE);   // the quiet zone, and it
-                                                                            // covers whatever QR was here
-  for (int y = 0; y < size; y++)
-    for (int x = 0; x < size; x++)
-      if (qrcodegen_getModule(qrCode, x, y))
-        tft.fillRect(x0 + (x + 1) * s, y0 + (y + 1) * s, s, s, ST77XX_BLACK);
+  int qx = (SCR_W - sq) / 2, qy = (SCR_H - sq) / 2;
+  if (px < sq) {                                           // white band between the code and the square
+    tft.fillRect(qx, qy, sq, y0 - qy, ST77XX_WHITE);
+    tft.fillRect(qx, y0 + px, sq, qy + sq - y0 - px, ST77XX_WHITE);
+    tft.fillRect(qx, y0, x0 - qx, px, ST77XX_WHITE);
+    tft.fillRect(x0 + px, y0, qx + sq - x0 - px, px, ST77XX_WHITE);
+  }
+  static uint16_t line[160];                               // one pixel row; px <= min(SCR_W, SCR_H)
+  tft.startWrite();
+  tft.setAddrWindow(x0, y0, px, px);
+  for (int cy = 0; cy < cells; cy++) {
+    int my = cy - 1;
+    for (int cx = 0; cx < cells; cx++) {
+      int mx = cx - 1;
+      bool dark = mx >= 0 && my >= 0 && mx < size && my < size && qrcodegen_getModule(qrCode, mx, my);
+      uint16_t c = dark ? ST77XX_BLACK : ST77XX_WHITE;
+      for (int k = 0; k < s; k++) line[cx * s + k] = c;
+    }
+    for (int k = 0; k < s; k++) tft.writePixels(line, px, true, false);
+  }
+  tft.endWrite();
+  gQrDrawUs = micros() - t0;
 }
 
 // Text turned on its side, using the same font as everything else. dir > 0 reads
@@ -480,8 +505,8 @@ static bool showAddressQR(int i) {
 // "More chains" view: the rows the Portfolio QR has no room for, as frames that
 // loop by themselves for the page's in-page camera scanner. Turn = step one frame
 // and pause, press = pause / play, hold = back to the Portfolio QR.
-#define MORE_FRAME_MS 500   // per frame; long enough for a phone to lock on, short enough
-                            // that a missed frame comes round again within a few seconds
+#define MORE_FRAME_MS 400   // per frame. Chosen with test/verify_screen.js: 350-400 ms collects all
+                            // frames fastest for both quick and slow phones; the QR itself redraws in ~12 ms
 static void showMore(int n) {
   int i = 1;
   bool paused = false, redraw = true;
@@ -494,7 +519,10 @@ static void showMore(int n) {
       if (!gHoldQR) { clearScreen(); textAt(4, 60, "QR failed", C_BAD); }
       char what[28];
       snprintf(what, sizeof what, "MORE %d/%d", i, n);
-      qrLabels(what, paused ? " press:play" : "  scan me", "turn:step hold:back");
+      char right[24];   // a margin holds ~21 sideways characters; the measured draw time shows while paused
+      if (paused) snprintf(right, sizeof right, "hold:back  draw %ums", (unsigned)((gQrDrawUs + 500) / 1000));
+      else snprintf(right, sizeof right, "turn:step hold:back");
+      qrLabels(what, paused ? " press:play" : "  scan me", right);
       redraw = false;
     }
     uint32_t spent = millis() - shownAt;

@@ -21,6 +21,10 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     # equals the device's own (test_chains); also checks extra.js's hashes against node / hashlib
     PYTHON=/path/to/venv/bin/python node verify_extra.js 3
 
+    # can a phone read the moving QR off this 160x128 screen, and how long should each frame stay up?
+    # renders the real frames on the panel, films them like a phone camera, decodes with the page's jsQR path
+    node verify_screen.js 24      # slow: a few minutes
+
     # the page against the live networks: runs docs/app.js unchanged with a stub DOM, prints the
     # verdict and case file, and checks every endpoint's CORS answer for a github.io origin
     node site_live.js demo      # a famous wallet, expects "are in possession"

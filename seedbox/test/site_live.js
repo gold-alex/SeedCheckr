@@ -123,6 +123,7 @@ vm.runInThisContext(appSrc, { filename: 'app.js' });
     const amt = amount.textContent || amount.children.map((c) => c.textContent).join(' ');
     console.log((li.classes.has('has-coins') ? '$ ' : '  ') + name.textContent.padEnd(22) + amt.padEnd(28) + (more.textContent || ''));
   }
+  if (process.env.SHOWHOST) for (const e of log) if (e.url.includes(process.env.SHOWHOST)) console.log("HOST", e.status, e.acao, e.err, e.url.slice(0, 120));
   console.log('=== endpoints (CORS as a browser would see it, origin ' + ORIGIN + ') ===');
   const seen = new Map();
   for (const e of log) {

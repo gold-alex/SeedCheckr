@@ -224,8 +224,13 @@ int ext_utxo_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out
     const UtxoRow* d = &ROWS[i];
     cu_row(&out[i], d->name, d->path, d->link, d->type);
     n = d->purpose == 49 ? p49 : d->purpose == 86 ? p86 : p44;
-    if (!hdnode_private_ckd(&n, d->coin|H) || !hdnode_private_ckd(&n, 0|H) ||
-        !hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
+    if (!hdnode_private_ckd(&n, d->coin|H)) goto done;
+    // BTC nested and BCH also send their account xpub so the page can scan the whole wallet
+    uint8_t xt = d->type == 0x10 ? 0x72 : d->type == 0x14 ? 0x73 : 0;
+    uint32_t fp = xt ? hdnode_fingerprint(&n) : 0;
+    if (!hdnode_private_ckd(&n, 0|H)) goto done;
+    if (xt) { hdnode_fill_public_key(&n); cu_xpub_record(&out[i], xt, &n, fp); }
+    if (!hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
     hdnode_fill_public_key(&n);
     if (fill(d, &n, &out[i])) goto done;
   }

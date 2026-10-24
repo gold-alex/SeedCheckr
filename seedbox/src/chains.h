@@ -21,6 +21,9 @@ typedef struct {
   uint8_t rawlen;      // 0 on the zpub row; on the legacy xpub row it is the pkh of m/44'/0'/0'/0/0
   uint8_t ext;         // 0 = core row (in the v1 portfolio QR). Otherwise the record type this row
                        // gets in the animated "more chains" frames; see docs/EXTENSIONS.md
+  uint8_t ext2;        // optional second record from the same row: the account's extended public key
+  uint8_t xlen;        // (parent fingerprint, chain code, compressed key) so the page can scan every
+  uint8_t xraw[72];    // address of the wallet, not just the first one. 0 = none.
 } ChainAddr;           // raw feeds the one-scan portfolio QR, see portfolio.h
 
 #define CHAINS_MAX 128   // upper bound on chains_count(); size ChainAddr arrays with this
