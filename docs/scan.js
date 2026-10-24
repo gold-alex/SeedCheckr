@@ -145,18 +145,27 @@
     const jsQR = await loadJsQR();
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let misses = 0;
     return {
       kind: 'jsQR',
       detect: async v => {
         const vw = v.videoWidth, vh = v.videoHeight;
         if (!vw || !vh) return [];
-        // the device's screen fills the middle of the picture: crop a center square,
-        // cap it at 800 px so a frame decodes in well under 100 ms on a phone
-        const side = Math.min(vw, vh), out = Math.min(side, 800);
+        // the device's screen sits in the middle of the picture: take the centre square at
+        // full camera resolution (never scaled down: the QR's modules are only 2 panel px,
+        // and from 15-20 cm, where many phones can still focus, every camera pixel counts).
+        // seedbox/test/verify_screen.js: about 2 in 3 single captures read at 15 cm this way,
+        // against about 1 in 3 for a 720p picture scaled to fit.
+        // After two misses in a row, one attempt looks at the whole picture height instead
+        // (scaled to 800 px), so a screen that is not in the middle of the picture is still
+        // found; a centred screen keeps getting the sharp full-resolution view.
+        const wide = misses % 3 === 2;
+        const side = wide ? Math.min(vw, vh) : Math.min(vw, vh, 800), out = Math.min(side, 800);
         if (canvas.width !== out) { canvas.width = out; canvas.height = out; }
         ctx.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, out, out);
         const img = ctx.getImageData(0, 0, out, out);
         const r = jsQR(img.data, out, out, { inversionAttempts: 'dontInvert' });
+        misses = r ? 0 : misses + 1;
         return r ? [r.data] : [];
       },
     };
@@ -182,8 +191,15 @@
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no camera access in this browser (the page must be on https)');
       const s = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       });
+      // keep refocusing while the phone moves in (ignored where the camera cannot)
+      try {
+        const tr = s.getVideoTracks()[0], caps = tr.getCapabilities ? tr.getCapabilities() : {};
+        // applyConstraints replaces the whole set, so the resolution goes in the same call
+        if (caps.focusMode && caps.focusMode.includes('continuous'))
+          await tr.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 }, advanced: [{ focusMode: 'continuous' }] });
+      } catch (e) { /* not supported: the camera keeps its own focus */ }
       if (stopped) { for (const t of s.getTracks()) t.stop(); throw new Error('stopped'); }
       stream = s;
       videoEl.setAttribute('playsinline', '');   // iOS: play inline, not fullscreen
@@ -202,7 +218,9 @@
             }
           }
         } catch (e) { /* a frame that fails to decode is normal */ }
-        if (!stopped) timer = setTimeout(tick, 30);
+        // a little jitter, so the decode rhythm cannot lock onto the device's frame rhythm
+        // and keep missing the same frames
+        if (!stopped) timer = setTimeout(tick, 20 + Math.random() * 60);
       };
       tick();
       return det.kind;

@@ -45,9 +45,18 @@
 
   // SHA-512/256 (Algorand checksum), with BigInt lanes: inputs here are 32 bytes.
   const K512 = ['428a2f98d728ae22', '7137449123ef65cd', 'b5c0fbcfec4d3b2f', 'e9b5dba58189dbbc', '3956c25bf348b538', '59f111f1b605d019', '923f82a4af194f9b', 'ab1c5ed5da6d8118', 'd807aa98a3030242', '12835b0145706fbe', '243185be4ee4b28c', '550c7dc3d5ffb4e2', '72be5d74f27b896f', '80deb1fe3b1696b1', '9bdc06a725c71235', 'c19bf174cf692694', 'e49b69c19ef14ad2', 'efbe4786384f25e3', '0fc19dc68b8cd5b5', '240ca1cc77ac9c65', '2de92c6f592b0275', '4a7484aa6ea6e483', '5cb0a9dcbd41fbd4', '76f988da831153b5', '983e5152ee66dfab', 'a831c66d2db43210', 'b00327c898fb213f', 'bf597fc7beef0ee4', 'c6e00bf33da88fc2', 'd5a79147930aa725', '06ca6351e003826f', '142929670a0e6e70', '27b70a8546d22ffc', '2e1b21385c26c926', '4d2c6dfc5ac42aed', '53380d139d95b3df', '650a73548baf63de', '766a0abb3c77b2a8', '81c2c92e47edaee6', '92722c851482353b', 'a2bfe8a14cf10364', 'a81a664bbc423001', 'c24b8b70d0f89791', 'c76c51a30654be30', 'd192e819d6ef5218', 'd69906245565a910', 'f40e35855771202a', '106aa07032bbd1b8', '19a4c116b8d2d0c8', '1e376c085141ab53', '2748774cdf8eeb99', '34b0bcb5e19b48a8', '391c0cb3c5c95a63', '4ed8aa4ae3418acb', '5b9cca4f7763e373', '682e6ff3d6b2b8a3', '748f82ee5defb2fc', '78a5636f43172f60', '84c87814a1f0ab72', '8cc702081a6439ec', '90befffa23631e28', 'a4506cebde82bde9', 'bef9a3f7b2c67915', 'c67178f2e372532b', 'ca273eceea26619c', 'd186b8c721c0c207', 'eada7dd6cde0eb1e', 'f57d4f7fee6ed178', '06f067aa72176fba', '0a637dc5a2c898a6', '113f9804bef90dae', '1b710b35131c471b', '28db77f523047d84', '32caab7b40c72493', '3c9ebe0a15c9bebc', '431d67c49c100d4c', '4cc5d4becb3e42b6', '597f299cfc657e2a', '5fcb6fab3ad6faec', '6c44198c4a475817'].map((x) => BigInt('0x' + x));
-  function sha512_256(msg) {
+  const IV512_256 = ['22312194fc2bf72c', '9f555fa3c84c64c2', '2393b86b6f53b151', '963877195940eabd', '96283ee2a88effe3', 'be5e1e2553863992', '2b0199fc2c85b8aa', '0eb72ddc81c52ca2'];
+  const IV512 = ['6a09e667f3bcc908', 'bb67ae8584caa73b', '3c6ef372fe94f82b', 'a54ff53a5f1d36f1', '510e527fade682d1', '9b05688c2b3e6c1f', '1f83d9abfb41bd6b', '5be0cd19137e2179'];
+  const sha512_256 = (msg) => sha512core(msg, IV512_256, 32);
+  const sha512 = (msg) => sha512core(msg, IV512, 64);
+  function hmacSha512(key, msg) {
+    const k = new Uint8Array(128); k.set(key.length > 128 ? sha512(key) : key);
+    const ip = k.map((x) => x ^ 0x36), op = k.map((x) => x ^ 0x5c);
+    return sha512(cat(op, sha512(cat(ip, msg))));
+  }
+  function sha512core(msg, iv, outLen) {
     const M = (1n << 64n) - 1n, rot = (x, n) => ((x >> BigInt(n)) | (x << BigInt(64 - n))) & M;
-    const H = ['22312194fc2bf72c', '9f555fa3c84c64c2', '2393b86b6f53b151', '963877195940eabd', '96283ee2a88effe3', 'be5e1e2553863992', '2b0199fc2c85b8aa', '0eb72ddc81c52ca2'].map((x) => BigInt('0x' + x));
+    const H = iv.map((x) => BigInt('0x' + x));
     const l = msg.length, nb = ((l + 17 + 127) >> 7) << 7;
     const m = new Uint8Array(nb); m.set(msg); m[l] = 0x80;
     const bits = BigInt(l) * 8n; for (let i = 0; i < 16; i++) m[nb - 1 - i] = Number((bits >> BigInt(8 * i)) & 0xffn);
@@ -66,10 +75,63 @@
       }
       [a, b, c, d, e, f, g, h].forEach((v, i) => { H[i] = (H[i] + v) & M; });
     }
-    const out = new Uint8Array(32);
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 8; j++) out[8 * i + j] = Number((H[i] >> BigInt(56 - 8 * j)) & 0xffn);
+    const out = new Uint8Array(outLen);
+    for (let i = 0; i < outLen / 8; i++) for (let j = 0; j < 8; j++) out[8 * i + j] = Number((H[i] >> BigInt(56 - 8 * j)) & 0xffn);
     return out;
   }
+
+  // RIPEMD-160 (for HASH160 = RIPEMD160(SHA256(x))); browsers have no built-in one.
+  function ripemd160(msg) {
+    const rl = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2, 4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13];
+    const rr = [5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14, 12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11];
+    const sl = [11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8, 7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12, 11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5, 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12, 9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6];
+    const sr = [8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6, 9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11, 9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5, 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8, 8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11];
+    const KL = [0, 0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xa953fd4e], KR = [0x50a28be6, 0x5c4dd124, 0x6d703ef3, 0x7a6d76e9, 0];
+    const f = (j, x, y, z) => (j < 16 ? x ^ y ^ z : j < 32 ? (x & y) | (~x & z) : j < 48 ? (x | ~y) ^ z : j < 64 ? (x & z) | (y & ~z) : x ^ (y | ~z));
+    const rol = (x, n) => (x << n) | (x >>> (32 - n));
+    const l = msg.length, nb = ((l + 9 + 63) >> 6) << 6, m = new Uint8Array(nb); m.set(msg); m[l] = 0x80;
+    const bits = l * 8; for (let i = 0; i < 8; i++) m[nb - 8 + i] = Math.floor(bits / 2 ** (8 * i)) & 0xff;
+    let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0;
+    for (let o = 0; o < nb; o += 64) {
+      const X = []; for (let i = 0; i < 16; i++) X.push(m[o + 4 * i] | (m[o + 4 * i + 1] << 8) | (m[o + 4 * i + 2] << 16) | (m[o + 4 * i + 3] << 24));
+      let al = h0, bl = h1, cl = h2, dl = h3, el = h4, ar = h0, br = h1, cr = h2, dr = h3, er = h4;
+      for (let j = 0; j < 80; j++) {
+        let t = (rol((al + f(j, bl, cl, dl) + X[rl[j]] + KL[j >> 4]) | 0, sl[j]) + el) | 0;
+        al = el; el = dl; dl = rol(cl, 10); cl = bl; bl = t;
+        t = (rol((ar + f(79 - j, br, cr, dr) + X[rr[j]] + KR[j >> 4]) | 0, sr[j]) + er) | 0;
+        ar = er; er = dr; dr = rol(cr, 10); cr = br; br = t;
+      }
+      const t = (h1 + cl + dr) | 0; h1 = (h2 + dl + er) | 0; h2 = (h3 + el + ar) | 0; h3 = (h4 + al + br) | 0; h4 = (h0 + bl + cr) | 0; h0 = t;
+    }
+    const out = new Uint8Array(20);
+    [h0, h1, h2, h3, h4].forEach((v, i) => { for (let k = 0; k < 4; k++) out[4 * i + k] = (v >>> (8 * k)) & 0xff; });
+    return out;
+  }
+  const hash160 = (b) => ripemd160(sha256(b));
+
+  // secp256k1, just enough for public child derivation (BIP32 CKDpub).
+  const SP = (1n << 256n) - (1n << 32n) - 977n, SN = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+  const SG = [0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n, 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8n];
+  const mod = (a) => ((a % SP) + SP) % SP;
+  function inv(a) { let [r0, r1, s0, s1] = [mod(a), SP, 1n, 0n]; while (r1) { const q = r0 / r1; [r0, r1] = [r1, r0 - q * r1]; [s0, s1] = [s1, s0 - q * s1]; } return mod(s0); }
+  function padd(A, B) {
+    if (!A) return B; if (!B) return A;
+    if (A[0] === B[0]) { if (mod(A[1] + B[1]) === 0n) return null; const l = mod(3n * A[0] * A[0] * inv(2n * A[1])); const x = mod(l * l - 2n * A[0]); return [x, mod(l * (A[0] - x) - A[1])]; }
+    const l = mod((B[1] - A[1]) * inv(B[0] - A[0])); const x = mod(l * l - A[0] - B[0]); return [x, mod(l * (A[0] - x) - A[1])];
+  }
+  function pmul(k, P) { let R = null, Q = P; while (k > 0n) { if (k & 1n) R = padd(R, Q); Q = padd(Q, Q); k >>= 1n; } return R; }
+  const big = (b) => { let v = 0n; for (const x of b) v = (v << 8n) | BigInt(x); return v; };
+  const be32 = (v) => { const o = new Uint8Array(32); for (let i = 31; i >= 0; i--) { o[i] = Number(v & 0xffn); v >>= 8n; } return o; };
+  function decompress(pub33) { const x = big(pub33.slice(1)); let y = 1n, b = mod(x * x * x + 7n), e = (SP + 1n) / 4n; while (e) { if (e & 1n) y = mod(y * b); b = mod(b * b); e >>= 1n; } if ((y & 1n) !== BigInt(pub33[0] & 1)) y = SP - y; return [x, y]; }
+  const compress = (P) => cat(Uint8Array.of(P[1] & 1n ? 3 : 2), be32(P[0]));
+  function ckdPub(pub33, chain, i) {   // non-hardened child i of (pub33, chain)
+    const I = hmacSha512(chain, cat(pub33, Uint8Array.of(i >>> 24, (i >>> 16) & 255, (i >>> 8) & 255, i & 255)));
+    const il = big(I.slice(0, 32)); if (il >= SN) throw new Error('invalid child');
+    const P = padd(pmul(il, SG), decompress(pub33)); if (!P) throw new Error('invalid child');
+    return { pub: compress(P), chain: I.slice(32) };
+  }
+  // First receive address hash (m/.../0/0) of an account xpub record (0x70-0x73 layout).
+  function firstPkh(rec) { const c = ckdPub(rec.slice(36, 69), rec.slice(4, 36), 0); return hash160(ckdPub(c.pub, c.chain, 0).pub); }
 
   // BLAKE2b with any output length (RFC 7693), BigInt lanes; inputs here are tiny.
   const B2IV = ['6a09e667f3bcc908', 'bb67ae8584caa73b', '3c6ef372fe94f82b', 'a54ff53a5f1d36f1', '510e527fade682d1', '9b05688c2b3e6c1f', '1f83d9abfb41bd6b', '5be0cd19137e2179'].map((x) => BigInt('0x' + x));
@@ -183,7 +245,11 @@
     algorand: (pub) => base32(cat(pub, sha512_256(pub).slice(28))),
     cardanoBase: (pay, stake) => bech32('addr', toWords(cat(Uint8Array.of(0x01), pay, stake))),
     cardanoStake: (stake) => bech32('stake', toWords(cat(Uint8Array.of(0xe1), stake))),
+    // account extended public key from a 0x70-0x73 record: fp(4) || chain code(32) || pubkey(33)
+    xpub: (rec, version) => base58check(cat(Uint8Array.of(version >>> 24, (version >>> 16) & 255, (version >>> 8) & 255, version & 255, 3),
+      rec.slice(0, 4), Uint8Array.of(0x80, 0, 0, 0), rec.slice(4, 36), rec.slice(36, 69))),
   };
+  const XPUB = 0x0488b21e, YPUB = 0x049d7cb2, ZPUB = 0x04b24746;
 
   // ---------------- per-type checks ----------------
   // build(records, K) -> list of { name, addr, explorer, run, unavailable? } using the fetch
@@ -371,6 +437,26 @@
               return { holdings: [h('ADA', units(BigInt(j.sum || 0), 6), 'cardano')], others: 0, partial: 'first address only' };
             });
           }, { explorerAddr: st }); break; }
+        // ---- whole wallets from account xpubs (Haskoin derives and scans every used address) ----
+        case 0x70: case 0x71: case 0x72: case 0x73: {
+          if (b.length !== 69) break;
+          const shown = addr.xpub(b, type === 0x70 ? ZPUB : type === 0x72 ? YPUB : XPUB), query = addr.xpub(b, XPUB);
+          const wallet = (chain, derive, symbol, price) => async () => {
+            const j = await fetchJSON('https://api.haskoin.com/' + chain + '/xpub/' + query + '?derive=' + derive);
+            if (!j.balance || j.balance.confirmed === undefined) throw new Error('unexpected answer');
+            const used = j.indices ? (j.indices.external || 0) + (j.indices.change || 0) : 0;
+            return { holdings: [h(symbol, units(BigInt(j.balance.confirmed) + BigInt(j.balance.unconfirmed || 0), 8), price)], others: 0, partial: null, note: used ? used + ' addresses used' : null };
+          };
+          const ex = 'https://blockchair.com/bitcoin/xpub/';
+          if (type === 0x70) add('Bitcoin wallet (segwit, every address)', shown, ex, wallet('btc', 'segwit', 'BTC', 'bitcoin'), { replaces: ['Bitcoin'] });
+          if (type === 0x71) {
+            add('Bitcoin wallet (legacy, every address)', shown, ex, wallet('btc', 'normal', 'BTC', 'bitcoin'), { replaces: ['Bitcoin (legacy 1...)'] });
+            add('Bitcoin Cash, legacy wallet (2017 fork)', shown, 'https://blockchair.com/bitcoin-cash/xpub/', wallet('bch', 'normal', 'BCH', 'bitcoin-cash'), { replaces: ['Bitcoin Cash (2017 fork)'] });
+          }
+          if (type === 0x72) add('Bitcoin wallet (nested segwit, every address)', shown, ex, wallet('btc', 'compat', 'BTC', 'bitcoin'), { replaces: ['Bitcoin nested segwit (3...)'] });
+          if (type === 0x73) add('Bitcoin Cash wallet (every address)', shown, 'https://blockchair.com/bitcoin-cash/xpub/', wallet('bch', 'normal', 'BCH', 'bitcoin-cash'), { replaces: ['Bitcoin Cash (BCH wallets)'] });
+          break;
+        }
         default: break;   // a newer device's record type; skipped by design
       }
     }
@@ -381,5 +467,5 @@
   // request says nothing about which coins a wallet holds.
   const PRICE_IDS = ['bitcoin', 'litecoin', 'bitcoin-cash', 'bitcoin-cash-sv', 'ecash', 'dash', 'zcash', 'digibyte', 'ravencoin', 'ethereum-classic', 'celo', 'harmony', 'kaia', 'vechain', 'vethor-token', 'theta-token', 'theta-fuel', 'zilliqa', 'icon', 'filecoin', 'kaspa', 'ergo', 'internet-computer', 'avalanche-2', 'terra-luna-2', 'terra-luna', 'terrausd', 'kava', 'secret', 'crypto-com-chain', 'band-protocol', 'thorchain', 'cacao', 'bitsong', 'desmos', 'persistence', 'hash-2', 'tx', 'agoric', 'solana', 'stellar', 'tezos', 'near', 'algorand', 'elrond-erd-2', 'hedera-hashgraph', 'iota', 'the-open-network', 'cardano', 'usd-coin', 'tether'];
 
-  return { build, PRICE_IDS, addr, cashaddr, base58, base58check, base32, bech32, toWords, sha256, sha224, sha512_256, blake2b, crc32, crc16xmodem, hex };
+  return { build, firstPkh, ripemd160, hmacSha512, sha512, ckdPub, PRICE_IDS, addr, cashaddr, base58, base58check, base32, bech32, toWords, sha256, sha224, sha512_256, blake2b, crc32, crc16xmodem, hex };
 });

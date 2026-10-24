@@ -287,14 +287,24 @@
         const c = new AbortController();
         const timer = setTimeout(() => c.abort(), Math.max(1, deadline - Date.now()));
         try {
-          const r = await fetch(url, Object.assign({}, opts, { signal: c.signal }));
+          let r;
+          try { r = await fetch(url, Object.assign({}, opts, { signal: c.signal })); }
+          catch (e) {
+            if (e && e.name === 'AbortError') throw timeoutError();
+            // A 429/5xx without CORS headers reaches the page as a network error, not a
+            // status (Haskoin's 503s do this), so a network error is retried like one.
+            return { retry: 'network error' };
+          }
           if (r.status === 429 || r.status >= 500) return { retry: r.status };
           if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
-          return { body: as === 'bytes' ? new Uint8Array(await r.arrayBuffer()) : as === 'text' ? await r.text() : await r.json() };
+          try { return { body: as === 'bytes' ? new Uint8Array(await r.arrayBuffer()) : as === 'text' ? await r.text() : await r.json() }; }
+          catch (e) { if (e && e.name === 'AbortError') throw timeoutError(); throw e; }
         } finally { clearTimeout(timer); }
       });
       if (!res.retry) return res.body;
-      if (attempt >= 2 || Date.now() + 700 * (attempt + 1) >= deadline) { const e = new Error('HTTP ' + res.retry); e.status = res.retry; throw e; }
+      // a CORS-blocked 4xx also looks like a network error, so those get one retry, not two
+      const maxAttempts = res.retry === 'network error' ? 1 : 2;
+      if (attempt >= maxAttempts || Date.now() + 700 * (attempt + 1) >= deadline) { const e = new Error(typeof res.retry === 'number' ? 'HTTP ' + res.retry : res.retry); if (typeof res.retry === 'number') e.status = res.retry; throw e; }
       await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
     }
   }
@@ -621,7 +631,8 @@
   async function run(payloadText) {
     let addr;
     try {
-      addr = await D.addressesFrom(D.parsePayload(payloadText));
+      state.v1 = D.parsePayload(payloadText);
+      addr = await D.addressesFrom(state.v1);
     } catch (e) {
       $('#error-text').textContent = e.message;
       $('#error').hidden = false;
@@ -750,16 +761,41 @@
   let stopCamera = null;
   function moreStatus(t) { $('#more-status').textContent = t; }
   function closeCamera() { if (stopCamera) { stopCamera(); stopCamera = null; } $('#more-cam').hidden = true; $('#more-start').hidden = state.extraDone; }
+  // The moving QR must come from the same seed as the Portfolio QR: the segwit account key
+  // it carries (0x70) derives the first segwit address, which the Portfolio QR also holds.
+  function sameSeed(records) {
+    const r = records.find((x) => x.type === 0x70 && x.bytes.length === 69);
+    if (!r || !state.v1) return null;                                      // nothing to compare against
+    try { return D.bytesToHex(window.SeedExtra.firstPkh(r.bytes)) === D.bytesToHex(state.v1.btc); } catch (e) { return false; }
+  }
   async function addExtra(records) {
     if (state.extraDone) return;          // later frames of a finished set must not add the networks again
+    if (sameSeed(records) === false) {
+      moreStatus('That moving QR comes from a different seed than the Portfolio QR you scanned. Scan both from the same SeedBox.');
+      return false;
+    }
     state.extraDone = true;
     closeCamera();
     const checks = window.SeedExtra.build(records, extraHelpers);
     $('#more-text').textContent = 'Checking ' + checks.length + ' more networks…';
     const more = await runChecks(checks, (d, t) => { $('#more-text').textContent = d + ' of ' + t + ' more networks answered'; });
-    state.results = state.results.concat(more);
+    // A whole-wallet scan supersedes the first-address check it covers, but only if it answered;
+    // otherwise the first-address result stays, so nothing is lost and nothing is counted twice.
+    // If the wallet scan reports less than the single address did (an index lagging behind),
+    // keep the first-address result instead; never let one source erase coins another found.
+    const before = state.results.length;
+    let all = state.results.concat(more);
+    const total = (r) => r.holdings.reduce((a, x) => a + (x.amount > 0 ? x.amount : 0), 0);
+    const drop = new Set();
+    for (const w of more) {
+      if (!w.ok || !w.check.replaces) continue;
+      for (const old of all.filter((r) => w.check.replaces.includes(r.check.name))) {
+        if (!old.ok || total(w) + 1e-12 >= total(old)) drop.add(old); else drop.add(w);
+      }
+    }
+    state.results = all.filter((r) => !drop.has(r));
     await showVerdict(state.results);
-    $('#more-text').textContent = 'Added ' + plural(checks.length, 'network', 'networks') + ' from the moving QR. The verdict above now covers ' + state.results.length + '.';
+    $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR and scanned whole Bitcoin wallets. The verdict above now covers ' + state.results.length + '.';
     $('#verdict').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
   }
   function startScan() {
@@ -775,8 +811,8 @@
       else if (p.total) moreStatus('Got ' + p.have + ' of ' + p.total + ' frames. Keep it steady.');
       if (p.done) {
         let recs;
-        try { recs = window.SeedScan.records(p.bytes); } catch (e) { moreStatus('Those frames did not decode: ' + e.message); return; }
-        addExtra(recs);
+        try { recs = window.SeedScan.records(p.bytes); } catch (e) { moreStatus('Those frames did not decode: ' + e.message); asm.reset(); return; }
+        Promise.resolve(addExtra(recs)).then((r) => { if (r === false) asm.reset(); });   // wrong seed: start over, camera stays on
       }
     });
     stopCamera = session;

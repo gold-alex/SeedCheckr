@@ -16,7 +16,8 @@ Unknown types are skipped by `len`, so old pages keep working with new devices.
 
 ## Frames
 
-The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames.
+The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames (7 today).
+The device shows each for 400 ms (`MORE_FRAME_MS`), chosen with `seedbox/test/verify_screen.js`.
 Frame `i` (1-based) is one QR, alphanumeric mode only, ECC L, version 1-11:
 
     SB2 <i> <n> <CRC> <DATA>
@@ -100,6 +101,24 @@ SLIP-10 ed25519 unless noted; all path elements hardened.
 | 0x58 | IOTA (rebased) | m/44'/4218'/0'/0'/0' | 32: BLAKE2b-256(0x00 \|\| pubkey) |
 | 0x59 | TON (Trust Wallet path) | m/44'/607'/0' | 32: pubkey |
 | 0x60 | Cardano Shelley (Icarus: Yoroi, Eternl, Lace, Nami) | m/1852'/1815'/0'/0/0 and m/1852'/1815'/0'/2/0 | 56: BLAKE2b-224(payment pub) \|\| BLAKE2b-224(stake pub) |
+
+### Whole wallets: account extended public keys
+
+These ride as a second record on an existing row (ChainAddr.ext2 / xraw), so the
+device's address list does not change. 69 bytes each: parent fingerprint (4, big
+endian) || chain code (32) || compressed public key (33) of the account node. The
+page rebuilds the xpub and asks Haskoin for the balance of every used address
+(gap-limit scan), and that result replaces the matching first-address check.
+
+| type | wallet | account path | carried on row |
+|---|---|---|---|
+| 0x70 | Bitcoin native segwit | m/84'/0'/0' | core row 1 (zpub) |
+| 0x71 | Bitcoin legacy (also scanned on Bitcoin Cash, the 2017 fork) | m/44'/0'/0' | core row 3 (xpub) |
+| 0x72 | Bitcoin nested segwit | m/49'/0'/0' | 0x10 |
+| 0x73 | Bitcoin Cash | m/44'/145'/0' | 0x14 |
+
+An extended public key reveals every address of that account (privacy, not funds):
+it goes to Haskoin only, never to price APIs.
 
 Not possible: Monero (a balance needs the private view key), Polkadot and
 Kusama (sr25519, derived from the entropy rather than the seed; no C library here).
