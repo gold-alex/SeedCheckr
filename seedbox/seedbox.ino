@@ -171,6 +171,18 @@ static void textAt(int x, int y, const char* s, uint16_t color) {
 
 static void textAt(int x, int y, const char* s) { textAt(x, y, s, C_FG); }
 
+// Text with the background painted too, padded with spaces to `width` characters,
+// so it overwrites whatever was on that line. Screens that change on a knob turn
+// use this instead of a full clear, which is what flashed.
+static void lineAt(int x, int y, const char* s, uint16_t color, int width) {
+  tft.setTextColor(color, C_BG);
+  tft.setCursor(x, y);
+  int n = 0;
+  for (; s[n] && n < width; n++) tft.write(s[n]);
+  for (; n < width; n++) tft.write(' ');
+  tft.setTextColor(C_FG);
+}
+
 // Full-screen message, waits for a press.
 static void message(const char* l1, const char* l2, const char* l3, uint16_t color) {
   clearScreen();
@@ -184,28 +196,44 @@ static void message(const char* l1, const char* l2, const char* l3, uint16_t col
   }
 }
 
+// One row of a list: blank it, then the item if there is one.
+static void menuRow(const char* const* items, int n, int top, int sel, int i) {
+  int y = 14 + i * 9;
+  tft.fillRect(0, y, SCR_W - 4, 9, C_BG);
+  if (top + i >= n) return;
+  bool cur = (top + i == sel);
+  tft.setCursor(2, y);
+  tft.setTextColor(cur ? C_HI : C_FG);
+  tft.print(cur ? "> " : "  ");
+  tft.print(items[top + i]);
+}
+
 // Scrollable list. Knob moves, press selects. Returns index, MENU_BACK or MENU_TIMEOUT.
+// Never clears the screen: every row is painted over whatever was there, and a knob
+// turn repaints only the two rows that changed, so nothing flashes.
 static int runMenu(const char* t, const char* const* items, int n, int sel) {
   const int VIS = (SCR_H - 14) / 9;
-  int top = 0;
+  int top = 0, prevTop = -1, prevSel = -1;
   if (sel < 0 || sel >= n) sel = 0;
+  drawTitle(t);
+  tft.fillRect(0, 11, SCR_W, 3, C_BG);                                  // gap under the title
+  tft.fillRect(0, 14 + VIS * 9, SCR_W, SCR_H - 14 - VIS * 9, C_BG);     // strip under the last row
   for (;;) {
     if (sel < top) top = sel;
     if (sel >= top + VIS) top = sel - VIS + 1;
-    clearScreen();
-    drawTitle(t);
-    for (int i = 0; i < VIS && top + i < n; i++) {
-      bool cur = (top + i == sel);
-      tft.setCursor(2, 14 + i * 9);
-      tft.setTextColor(cur ? C_HI : C_FG);
-      tft.print(cur ? "> " : "  ");
-      tft.print(items[top + i]);
+    if (top != prevTop) {                       // first draw, or the list scrolled
+      for (int i = 0; i < VIS; i++) menuRow(items, n, top, sel, i);
+      tft.fillRect(SCR_W - 4, 14, 4, SCR_H - 14, C_BG);
+      if (n > VIS) {   // scrollbar
+        int h = (SCR_H - 14) * VIS / n; if (h < 4) h = 4;
+        int y = 14 + (SCR_H - 14 - h) * top / (n - VIS);
+        tft.fillRect(SCR_W - 3, y, 2, h, C_DIM);
+      }
+    } else if (sel != prevSel) {                // cursor moved within the visible rows
+      menuRow(items, n, top, sel, prevSel - top);
+      menuRow(items, n, top, sel, sel - top);
     }
-    if (n > VIS) {   // scrollbar
-      int h = (SCR_H - 14) * VIS / n; if (h < 4) h = 4;
-      int y = 14 + (SCR_H - 14 - h) * top / (n - VIS);
-      tft.fillRect(SCR_W - 3, y, 2, h, C_DIM);
-    }
+    prevTop = top; prevSel = sel;
     Ev e = waitEvent();
     if (e == EV_CW) sel = (sel + 1) % n;
     else if (e == EV_CCW) sel = (sel + n - 1) % n;
@@ -230,7 +258,9 @@ static void paintQR() {
   int s = (SCR_W < SCR_H ? SCR_W : SCR_H) / cells;
   int px = s * cells;
   int x0 = (SCR_W - px) / 2, y0 = (SCR_H - px) / 2;
-  tft.fillRect(x0, y0, px, px, ST77XX_WHITE);
+  int sq = (SCR_W < SCR_H ? SCR_W : SCR_H);
+  tft.fillRect((SCR_W - sq) / 2, (SCR_H - sq) / 2, sq, sq, ST77XX_WHITE);   // the quiet zone, and it
+                                                                            // covers whatever QR was here
   for (int y = 0; y < size; y++)
     for (int x = 0; x < size; x++)
       if (qrcodegen_getModule(qrCode, x, y))
@@ -259,20 +289,24 @@ static bool drawPortfolioQR() {
 // ---------------- Address screens ----------------
 // Text view. Press = QR, turn = next/prev chain, hold = back to list.
 // Returns the chain index to continue with, or -1 for back.
+static bool gAddrScreenLive = false;    // the fixed parts of the text view are already on screen
+
 static int showAddressText(int i) {
   const ChainAddr& a = gAddr[i];
-  clearScreen();
-  drawTitle(a.name);
-  textAt(2, 14, a.path, C_DIM);
-  // wrap the address to the screen width
   int cpl = (SCR_W - 4) / 6;            // chars per line (26 landscape, 20 portrait)
-  int len = strlen(a.addr), y = 28;
-  for (int o = 0; o < len && y < SCR_H - 28; o += cpl, y += 10) {
-    char line[32]; strncpy(line, a.addr + o, cpl); line[cpl] = 0;
-    textAt(2, y, line, C_HI);
+  if (!gAddrScreenLive) {
+    clearScreen();
+    textAt(2, SCR_H - 24, "turn: next chain", C_DIM);
+    textAt(2, SCR_H - 14, "press: QR  hold: back", C_DIM);
+    gAddrScreenLive = true;
   }
-  textAt(2, SCR_H - 24, "turn: next chain", C_DIM);
-  textAt(2, SCR_H - 14, "press: QR  hold: back", C_DIM);
+  drawTitle(a.name);
+  lineAt(2, 14, a.path, C_DIM, cpl);
+  // wrap the address to the screen width; unused lines are blanked so a shorter
+  // address fully replaces a longer one when the knob moves to the next chain
+  int len = strlen(a.addr);
+  for (int o = 0, y = 28; y < SCR_H - 28; o += cpl, y += 10)
+    lineAt(2, y, o < len ? a.addr + o : "", C_HI, cpl);
   for (;;) {
     Ev e = waitEvent();
     if (e == EV_CW)  return (i + 1) % chains_count();
@@ -286,14 +320,16 @@ static int showAddressText(int i) {
 static bool showAddressQR(int i) {
   const ChainAddr& a = gAddr[i];
   bool link = (a.link != NULL);
+  gAddrScreenLive = false;
+  clearScreen();
   for (;;) {
-    clearScreen();
     char buf[200];
     if (link) snprintf(buf, sizeof buf, a.link, a.addr);
     else      snprintf(buf, sizeof buf, "%s", a.addr);
     bool ok = drawQR(buf);
-    if (!ok) textAt(4, 60, "too long for QR", C_BAD);
+    if (!ok) { clearScreen(); textAt(4, 60, "too long for QR", C_BAD); }
     // label in the left margin, one character per line
+    tft.fillRect(0, 0, 10, 44, C_BG);
     const char* tag = link ? "LINK" : "RAW";
     for (int k = 0; tag[k]; k++) { char c[2] = {tag[k], 0}; textAt(2, 2 + k * 10, c, C_DIM); }
     Ev e = waitEvent();
@@ -348,6 +384,7 @@ static void browseAddresses() {
       if (r & 0x100) { i = r & 0xFF; if (!showAddressQR(i)) break; }
       else i = r;
     }
+    gAddrScreenLive = false;
     if (i >= 0) sel = (i & 0xFF) + 1;
   }
   wipeAll();

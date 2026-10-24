@@ -23,28 +23,34 @@ Pico 2 + 1.8" ST7735 (Lee's PID 18403) + Bourns PEC11R encoder.
 
 ## Wiring
 
-Pico right side, USB end = row 1, pin N = breadboard row N.
+The GP labels are printed on the underside of the Pico, so count holes instead. Hold the Pico with the USB connector at the top and count down from the USB end. Every GND pin has a square pad (holes 3, 8, 13 and 18 from the top on each side); if hole 3 isn't square you're counting from the wrong end.
 
-| Display pin | Pico | GPIO |
-|---|---|---|
-| GND | pin 38 | GND |
-| VDD | pin 36 | 3V3 OUT |
-| SCL | pin 24 | GP18 (SPI0 SCK) |
-| SDA | pin 25 | GP19 (SPI0 TX) |
-| RST | pin 26 | GP20 |
-| DC  | pin 21 | GP16 |
-| CS  | pin 22 | GP17 |
-| BLK | pin 27 | GP21 |
+Right-hand column (display):
 
-| Encoder pin | Pico | GPIO |
-|---|---|---|
-| A (outer, 3-pin side) | pin 2 | GP1 |
-| C (middle, 3-pin side) | pin 3 | GND |
-| B (outer, 3-pin side) | pin 4 | GP2 |
-| Switch (2-pin side) | pin 5 | GP3 |
-| Switch (2-pin side) | pin 8 | GND |
+| Display pin | Hole from USB end | Pico pin | GPIO |
+|---|---|---|---|
+| GND | 3 (square) | 38 | GND |
+| VDD | 5 | 36 | 3V3 OUT |
+| BLK | 5 (shares the 3V3 hole with VDD) | 36 | 3V3 OUT |
+| (empty) | 14 | 27 | GP21 (the sketch drives it high, but a GPIO can't power the backlight; wire BLK to 3V3 instead) |
+| RST | 15 | 26 | GP20 |
+| SDA | 16 | 25 | GP19 (SPI0 TX) |
+| SCL | 17 | 24 | GP18 (SPI0 SCK) |
+| (empty) | 18 (square) | 23 | GND |
+| CS | 19 | 22 | GP17 |
+| DC | 20 (last hole) | 21 | GP16 |
 
-GP16 is the Pico's default SPI MISO. The sketch moves MISO to unused GP0 (`SPI.setRX(0)`) so SPI can't steal the DC line. Keep that line.
+Left-hand column (encoder):
+
+| Encoder pin | Hole from USB end | Pico pin | GPIO |
+|---|---|---|---|
+| A (outer, 3-pin side) | 2 | 2 | GP1 |
+| C (middle, 3-pin side) | 3 (square) | 3 | GND |
+| B (outer, 3-pin side) | 4 | 4 | GP2 |
+| Switch (2-pin side) | 5 | 5 | GP3 |
+| Switch (2-pin side) | 8 (square) | 8 | GND |
+
+If the USB end sits at breadboard row R, hole N is row R+N-1. The display is set up once at boot, so after any wiring change unplug and replug the Pico. A white screen means power and backlight are fine but the five signal wires (RST, SDA, SCL, CS, DC) aren't reaching the right pins. A dark grey screen after that means the signals are right and the backlight is off (BLK on a GPIO). Pressing the knob and watching the screen fade and restart means the encoder is on the wrong side of the Pico and is shorting 3V3 to GND.
 
 ## Controls
 
