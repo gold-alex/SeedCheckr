@@ -63,9 +63,10 @@
     }
     throw new Error('no program address found');
   }
-  // The SPL associated token account of owner for mint, as base58.
-  async function associatedTokenAddress(owner, mint) {
-    return findProgramAddress([b58decode(owner), b58decode(TOKEN_PROGRAM), b58decode(mint)], ATA_PROGRAM);
+  // The associated token account of owner for mint, as base58 (program: the mint's token
+  // program, classic SPL unless given, e.g. Token-2022).
+  async function associatedTokenAddress(owner, mint, program) {
+    return findProgramAddress([b58decode(owner), b58decode(program || TOKEN_PROGRAM), b58decode(mint)], ATA_PROGRAM);
   }
 
   return { associatedTokenAddress, findProgramAddress, isOnCurve, b58decode, b58encode };

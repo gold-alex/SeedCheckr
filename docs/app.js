@@ -241,7 +241,6 @@
 
   // api.mainnet-beta.solana.com refuses browser origins (403), so it is not on this list.
   const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://solana.leorpc.com/?api_key=FREE', 'https://rpc.solanatracker.io/public', 'https://public.rpc.solanavibestation.com'];
-  const SOL_STABLES = [['USDC', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'usd-coin'], ['USDT', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', 'tether']];
   const TRX_STABLES = { TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t: ['USDT', 'tether', 6], TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8: ['USDC', 'usd-coin', 6] };
   // Fallbacks for the single-source chains (each checked for browser CORS).
   const BTC_APIS = ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'];
@@ -309,6 +308,7 @@
     }
   }
   function fetchJSON(url, opts, timeoutMs) { return fetchOnce(url, opts, timeoutMs, 'json'); }
+  const TOKENS = window.SeedTokens.make({ fetchJSON, rpc, firstOk, units, solRpcs: SOL_RPCS, ata: (o, m, p) => window.SolanaATA.associatedTokenAddress(o, m, p) });
   async function rpc(url, method, params) {
     const j = await fetchJSON(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
     if (j.error) throw new Error(j.error.message || 'rpc error');
@@ -330,18 +330,14 @@
   // ---------------- per-chain checks ----------------
   // Each returns { holdings: [{symbol, amount, price}], others: n, partial: text|null }.
   // holdings decide the verdict; others is a count of tokens that do not.
+  // Native coin from an RPC, then every token (tokens.js: explorer token lists, else the
+  // network's biggest tokens by eth_call).
   async function checkEvm(c, addr) {
     let url = c.rpcs[0];
     const bal = await firstOk(c.rpcs, async (u) => { const r = await rpc(u, 'eth_getBalance', [addr, 'latest']); url = u; return r; });
-    const holdings = [h(c.symbol, units(bal, 18), c.price)];
-    const owner = addr.slice(2).toLowerCase().padStart(64, '0');
-    const res = await Promise.allSettled(c.tokens.map((tk) => rpc(url, 'eth_call', [{ to: tk.addr, data: '0x70a08231' + owner }, 'latest'])));
-    let failed = 0;
-    res.forEach((r, i) => {
-      if (r.status === 'fulfilled' && /^0x[0-9a-fA-F]+$/.test(r.value)) holdings.push(h(c.tokens[i].symbol, units(r.value, c.tokens[i].dec), c.tokens[i].price));
-      else failed++;
-    });
-    return { holdings, others: 0, partial: failed ? 'stablecoins not checked' : null };
+    let t;
+    try { t = await TOKENS.evm(c, addr, url); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
+    return { holdings: [h(c.symbol, units(bal, 18), c.price)].concat(t.holdings), others: t.others, partial: t.partial, note: t.note };
   }
   async function checkMempoolStyle(base, addr, symbol, price) {
     const j = await fetchJSON(base + addr);
@@ -425,21 +421,13 @@
     });
     return { holdings: [h('DOGE', units(sats, 8), 'dogecoin')], others: 0, partial: null };
   }
-  // Public Solana RPCs refuse the "list all token accounts" call, so the page
-  // derives the wallet's USDC and USDT accounts itself (ata.js) and reads those.
+  // SOL from an RPC, then every token: public RPCs refuse "list all token accounts", so
+  // tokens.js asks Jupiter, else reads the biggest tokens' accounts (ata.js).
   async function checkSol(addr) {
     const r = await firstOk(SOL_RPCS, (u) => rpc(u, 'getBalance', [addr]));
-    const holdings = [h('SOL', units(BigInt(r.value), 9), 'solana')];
-    let partial = null;
-    try {
-      for (const [symbol, mint, price] of SOL_STABLES) {
-        const ata = await window.SolanaATA.associatedTokenAddress(addr, mint);
-        const info = await firstOk(SOL_RPCS, (u) => rpc(u, 'getAccountInfo', [ata, { encoding: 'jsonParsed' }]));
-        const parsed = info && info.value && info.value.data && info.value.data.parsed && info.value.data.parsed.info;
-        if (parsed && parsed.mint === mint && parsed.tokenAmount && parsed.tokenAmount.uiAmount > 0) holdings.push(h(symbol, parsed.tokenAmount.uiAmount, price));
-      }
-    } catch (e) { partial = 'stablecoins not checked'; }
-    return { holdings, others: 0, partial, note: 'other SPL tokens not checked' };
+    let t;
+    try { t = await TOKENS.sol(addr); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
+    return { holdings: [h('SOL', units(BigInt(r.value), 9), 'solana')].concat(t.holdings), others: t.others, partial: t.partial };
   }
   async function checkTrx(addr) {
     const j = await fetchJSON('https://api.trongrid.io/v1/accounts/' + addr);
@@ -719,7 +707,8 @@
         if (x.amount <= 0) continue;
         any = true;
         x.usd = undefined;
-        if (prices[x.price] != null) { x.usd = x.amount * prices[x.price]; usd += x.usd; } else priced = false;
+        const p = x.usdPrice != null ? x.usdPrice : prices[x.price];   // usdPrice: a token tokens.js valued itself
+        if (p != null) { x.usd = x.amount * p; usd += x.usd; } else priced = false;
       }
       if (any) chainsWithCoins++;
     }

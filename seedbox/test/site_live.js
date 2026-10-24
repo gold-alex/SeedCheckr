@@ -62,6 +62,7 @@ globalThis.SeedDecode = require(path.join(REPO, 'docs/decode.js'));
 globalThis.SolanaATA = require(path.join(REPO, 'docs/ata.js'));
 globalThis.SeedScan = require(path.join(REPO, 'docs/scan.js'));
 globalThis.SeedExtra = require(path.join(REPO, 'docs/extra.js'));
+globalThis.SeedTokens = require(path.join(REPO, 'docs/tokens.js'));
 // stand-in camera: hands the device's frames to the page as if it read them off the screen
 globalThis.SeedScan.startCamera = (video, onText) => { const stop = () => {}; stop.ready = Promise.resolve('test'); setTimeout(() => { FRAMES.forEach((f) => onText(f)); FRAMES.forEach((f) => onText(f)); }, 50); return stop; };
 

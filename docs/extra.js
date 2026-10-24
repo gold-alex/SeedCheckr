@@ -594,13 +594,14 @@
             const a = walletAddr('eth', ckdPub(b.slice(36, 69), b.slice(4, 36), n).pub);
             add('Ethereum account ' + (n + 1) + ' (MetaMask), 10 networks', a, 'https://debank.com/profile/', async () => {
               const rs = await Promise.allSettled(nets.map((c) => K.checkEvm(c, a)));
-              const holdings = []; let failed = 0;
+              const holdings = []; let failed = 0, others = 0;
               rs.forEach((r, i) => {
                 if (r.status !== 'fulfilled') { failed++; return; }
-                for (const x of r.value.holdings) if (x.amount > 0) holdings.push(h(x.symbol + ' on ' + nets[i].name, x.amount, x.price));
+                for (const x of r.value.holdings) if (x.amount > 0) holdings.push(Object.assign({}, x, { symbol: x.symbol + ' on ' + nets[i].name }));
+                others += r.value.others || 0;
               });
               if (failed === nets.length) throw new Error('no network answered');
-              return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others: 0, partial: failed ? failed + ' of ' + nets.length + ' networks did not answer' : null };
+              return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others, partial: failed ? failed + ' of ' + nets.length + ' networks did not answer' : null };
             });
           }
           break;
