@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // tokens_live.js - docs/tokens.js against the live APIs, as the page would call it.
 // usage: node tokens_live.js [evmAddress] [solanaAddress] [network keys, comma separated]
-//        BREAK=eth,bsc node tokens_live.js ...   pretends those token-list APIs are down
+//        BREAK=eth,bsc node tokens_live.js ...       pretends those explorers are down
+//        BREAK_ALL=eth,bsc node tokens_live.js ...   pretends every token-list API is down
 'use strict';
 const path = require('path');
 const fs = require('fs');
@@ -35,7 +36,9 @@ const evmSrc = src.slice(src.indexOf('const EVM = ['), src.indexOf('];', src.ind
 const EVM = new Function('function t(symbol, addr, dec, price) { return { symbol, addr, dec, price }; } function ev(key, name, rpcs, symbol, price, explorer, tokens) { return { key, name, rpcs, symbol, price, explorer, tokens: tokens || [] }; }' + evmSrc + ' return EVM;')();
 const SOL_RPCS = eval(src.match(/const SOL_RPCS = (\[[^\]]+\])/)[1]);
 
-if (process.env.BREAK) for (const k of process.env.BREAK.split(",")) T.SRC[k] = [["bs", "https://nonexistent.invalid"]];
+// BREAK: the explorers are down (MetaMask/Rabby still answer); BREAK_ALL: every token-list source is down
+if (process.env.BREAK) for (const k of process.env.BREAK.split(',')) T.SRC[k] = [['bs', 'https://nonexistent.invalid']].concat((T.SRC[k] || []).filter(([kind]) => kind === 'mm' || kind === 'rb'));
+if (process.env.BREAK_ALL) for (const k of process.env.BREAK_ALL.split(',')) T.SRC[k] = [['bs', 'https://nonexistent.invalid']];
 const K = T.make({ fetchJSON, rpc, firstOk, units, solRpcs: SOL_RPCS, ata: ATA.associatedTokenAddress });
 const evmAddr = process.argv[2] || '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
 const solAddr = process.argv[3] || '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zPmGP1y';

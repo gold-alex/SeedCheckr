@@ -157,6 +157,15 @@
     ev('sophon', 'Sophon', ['https://rpc.sophon.xyz'], 'SOPH', 'sophon', 'https://sophscan.xyz/address/'),
     ev('plasma', 'Plasma', ['https://rpc.plasma.to', 'https://plasma.drpc.org'], 'XPL', 'plasma', 'https://plasmascan.to/address/',
       [t('USDT0', '0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb', 6, 'usdt0')]),
+    ev('megaeth', 'MegaETH', ['https://mainnet.megaeth.com/rpc', 'https://megaeth.drpc.org'], 'ETH', 'ethereum', 'https://megaeth.blockscout.com/address/'),
+    ev('hood', 'Robinhood Chain', ['https://rpc.mainnet.chain.robinhood.com', 'https://robinhood-rpc.publicnode.com', 'https://robinhood.drpc.org'], 'ETH', 'ethereum', 'https://robinhoodchain.blockscout.com/address/'),
+    ev('xdc', 'XDC Network', ['https://erpc.xdcrpc.com', 'https://rpc.xdcrpc.com', 'https://rpc.ankr.com/xdc'], 'XDC', 'xdce-crowd-sale', 'https://xdcscan.com/address/'),
+    ev('og', '0G', ['https://evmrpc.0g.ai'], '0G', 'zero-gravity', 'https://chainscan.0g.ai/address/'),
+    ev('citrea', 'Citrea', ['https://rpc.mainnet.citrea.xyz'], 'cBTC', 'bitcoin', 'https://explorer.mainnet.citrea.xyz/address/'),
+    ev('b2', 'B² Network', ['https://rpc.bsquared.network', 'https://b2.drpc.org', 'https://b2-mainnet.alt.technology'], 'BTC', 'bitcoin', 'https://explorer.bsquared.network/address/'),
+    ev('wemix', 'WEMIX', ['https://api.wemix.com', 'https://wemix.drpc.org'], 'WEMIX', 'wemix-token', 'https://explorer.wemix.com/address/'),
+    ev('kite', 'Kite AI', ['https://rpc.gokite.ai', 'https://kite.drpc.org'], 'KITE', 'kite', 'https://kitescan.ai/address/'),
+    ev('dbk', 'DBK Chain', ['https://rpc.mainnet.dbkchain.io'], 'ETH', 'ethereum', 'https://scan.dbkchain.io/address/'),
     ev('cyber', 'Cyber', ['https://rpc.cyber.co', 'https://cyber.alt.technology'], 'ETH', 'ethereum', 'https://cyberscan.co/address/'),
     ev('vana', 'Vana', ['https://rpc.vana.org'], 'VANA', 'vana', 'https://vanascan.io/address/'),
     ev('imx', 'Immutable zkEVM', ['https://rpc.immutable.com'], 'IMX', 'immutable-x', 'https://explorer.immutable.com/address/',
@@ -249,9 +258,11 @@
   const XAH_RPCS = ['https://xahau.network', 'https://xahau.org'];
   const ECLIPSE_RPC = 'https://mainnetbeta-rpc.eclipse.xyz';
   const MOVE_API = 'https://mainnet.movementnetwork.xyz/v1';
-  // Hyperliquid's own ledger, same address as the EVM key. Spot coins that count.
+  // Hyperliquid's own ledger, same address as the EVM key. Spot coins priced by CoinGecko;
+  // any other spot token counts at its USDC mark price when that pair trades HL_MIN_VOLUME a day.
   const HL_INFO = 'https://api.hyperliquid.xyz/info';
   const HL_COINS = { USDC: 'usd-coin', HYPE: 'hyperliquid', USDT0: 'usdt0', USDH: 'usdh-2' };   // usdh-2 is Native Markets' USDH on Hyperliquid
+  const HL_MIN_VOLUME = 20000;
 
   // ---------------- fetch helpers ----------------
   // A scan fires well over a hundred requests at once, and several go to the same host
@@ -454,22 +465,38 @@
     holdings.unshift(h(c.symbol, units(native, c.dec), c.price));
     return { holdings, others, partial: null };
   }
-  // Perps account value plus spot balances on Hyperliquid itself.
+  // Perps account value, spot balances, staked HYPE and vault deposits on Hyperliquid itself.
   async function checkHyperliquid(addr) {
-    const ask = (type) => fetchJSON(HL_INFO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type, user: addr }) });
-    const [perp, spot] = await Promise.all([ask('clearinghouseState'), ask('spotClearinghouseState')]);
+    const ask = (body) => fetchJSON(HL_INFO, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const opt = (p) => p.catch(() => undefined);
+    const [perp, spot, staked, vaults, market] = await Promise.all([ask({ type: 'clearinghouseState', user: addr }), ask({ type: 'spotClearinghouseState', user: addr }),
+      opt(ask({ type: 'delegatorSummary', user: addr })), opt(ask({ type: 'userVaultEquities', user: addr })), opt(ask({ type: 'spotMetaAndAssetCtxs' }))]);
     const holdings = [];
     const perpUsd = Number(((perp || {}).marginSummary || {}).accountValue || 0);
     if (perpUsd > 0) holdings.push(h('USDC (perps)', perpUsd, 'usd-coin'));
+    const px = {};   // spot token index -> USDC mark price
+    if (Array.isArray(market)) {
+      const ctx = Object.fromEntries((market[1] || []).map((c) => [c.coin, c]));   // by pair name: not in universe order
+      for (const u of (market[0] || {}).universe || []) {
+        const c = ctx[u.name];
+        if (u.tokens[1] === 0 && c && Number(c.dayNtlVlm) >= HL_MIN_VOLUME && Number(c.markPx) > 0) px[u.tokens[0]] = Number(c.markPx);
+      }
+    }
     let others = 0;
     for (const b of (spot || {}).balances || []) {
       const amt = Number(b.total || 0);
       if (!(amt > 0)) continue;
       if (b.coin in HL_COINS) holdings.push(h(b.coin, amt, HL_COINS[b.coin]));
+      else if (px[b.token]) holdings.push({ symbol: String(b.coin).slice(0, 16), amount: amt, price: null, usdPrice: px[b.token] });
       else others++;
     }
+    const hype = staked ? Number(staked.delegated || 0) + Number(staked.undelegated || 0) + Number(staked.totalPendingWithdrawal || 0) : 0;
+    if (hype > 0) holdings.push(h('HYPE (staked)', hype, 'hyperliquid'));
+    const inVaults = (Array.isArray(vaults) ? vaults : []).reduce((sum, v) => sum + (Number(v.equity) || 0), 0);
+    if (inVaults > 0) holdings.push(h('USDC (vaults)', inVaults, 'usd-coin'));
     if (!holdings.length) holdings.push(h('USDC', 0, 'usd-coin'));
-    return { holdings, others, partial: null };
+    const missed = [staked === undefined && 'staking', vaults === undefined && 'vaults', market === undefined && others && 'spot prices'].filter(Boolean);
+    return { holdings, others, partial: missed.length ? missed.join(', ') + ' not checked' : null };
   }
   async function checkXrp(addr) {
     const j = await firstOk(XRP_RPCS, (u) => fetchJSON(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'account_info', params: [{ account: addr, ledger_index: 'validated' }] }) }));
