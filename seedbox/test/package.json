@@ -8,5 +8,8 @@
   },
   "dependencies": {
     "jsqr": "^1.4.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1"
   }
 }

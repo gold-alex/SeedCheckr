@@ -30,5 +30,11 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     node site_live.js demo      # a famous wallet, expects "are in possession"
     node site_live.js random    # a fresh mnemonic, expects "not in possession"
     node site_live.js "mnemonic:abandon ... about" --more   # both QRs; a stand-in camera feeds the device's frames
+    # site_live.js ends with a health section (every network that did not answer or only partly answered)
+    # and exits 1 on a wrong verdict, a timeout, or more than MAX_FAIL (default 2) networks not answering
+
+    # the page in a real browser (Chrome via puppeteer-core), phone sized: landing, a bad QR, every network
+    # blocked (each cell and row must say "no answer"), and the live demo (every cell resolves, legend adds up)
+    node verify_page.js         # or: node verify_page.js offline demo; CHROME=/path/to/chrome if not on macOS
 
 `test_portfolio "words..."` prints the payload and every address for one mnemonic. `test_frames < rows` prints the extension bytes and `FRAME|` lines for rows given as `<type hex> <raw hex>` lines. `test_qr URL PAYLOAD` (or `test_qr -t TEXT`, or `test_qr -f FRAMETEXT`) dumps the QR modules as text, exactly what the screen would show.

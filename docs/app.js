@@ -620,7 +620,7 @@
   }
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
-  // ---------------- confetti ----------------
+  // ---------------- confetti: a shower of coins ----------------
   function confetti() {
     const c = $('#confetti');
     const ctx = c.getContext('2d');
@@ -628,23 +628,93 @@
     const W = window.innerWidth, H = window.innerHeight;
     c.width = W * dpr; c.height = H * dpr; ctx.scale(dpr, dpr);
     c.style.display = 'block';
-    const colors = ['#f5c542', '#f7f1e3', '#2fd57a', '#ffffff', '#2b4ec2'];
-    const P = Array.from({ length: 160 }, () => ({
-      x: Math.random() * W, y: -20 - Math.random() * H * 0.6, vx: (Math.random() - 0.5) * 2.2, vy: 2 + Math.random() * 3,
-      s: 5 + Math.random() * 7, r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.25, col: colors[Math.floor(Math.random() * colors.length)],
+    const P = Array.from({ length: 90 }, () => ({
+      x: Math.random() * W, y: -30 - Math.random() * H * 0.7, vx: (Math.random() - 0.5) * 1.6, vy: 2 + Math.random() * 3,
+      s: 9 + Math.random() * 9, spin: Math.random() * Math.PI, vs: 0.08 + Math.random() * 0.12, gold: Math.random() < 0.8,
     }));
     const t0 = performance.now();
     (function frame(now) {
       ctx.clearRect(0, 0, W, H);
       let alive = false;
       for (const p of P) {
-        p.x += p.vx; p.y += p.vy; p.r += p.vr; p.vy += 0.035;
-        if (p.y < H + 20) alive = true;
-        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.col;
-        ctx.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); ctx.restore();
+        p.x += p.vx; p.y += p.vy; p.spin += p.vs; p.vy += 0.04;
+        if (p.y < H + 30) alive = true;
+        const sx = Math.max(0.15, Math.abs(Math.cos(p.spin)));   // a coin turning edge-on
+        ctx.save(); ctx.translate(p.x, p.y); ctx.scale(sx, 1);
+        ctx.beginPath(); ctx.arc(0, 0, p.s, 0, Math.PI * 2);
+        ctx.fillStyle = p.gold ? '#ffc531' : '#5b3df5'; ctx.fill();
+        ctx.lineWidth = 2.5; ctx.strokeStyle = p.gold ? '#c98a00' : '#3a22c4'; ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, p.s * 0.55, 0, Math.PI * 2);
+        ctx.strokeStyle = p.gold ? 'rgba(201, 138, 0, 0.55)' : 'rgba(255, 255, 255, 0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.restore();
       }
       if (alive && now - t0 < 7000) requestAnimationFrame(frame); else c.style.display = 'none';
     })(t0);
+  }
+
+  // ---------------- the board: one cell per network ----------------
+  // partial: it answered, but not every token was read, so "nothing" is not certain there.
+  // skip: a network known to be unreachable from a browser, not a failure of this scan.
+  const hasCoins = (r) => r.holdings.some((x) => x.amount > 0);
+  const cellState = (r) => (!r.ok ? (r.check.unavailable ? 'skip' : 'fail') : hasCoins(r) ? 'hit' : r.partial ? 'part' : 'empty');
+  // what the retry button runs again: no answer, or answered without reading every token
+  const retryable = (r) => cellState(r) === 'fail' || cellState(r) === 'part';
+  function addCells(board, checks) {
+    return checks.map((c, i) => {
+      const d = document.createElement('span');
+      d.className = 'cell wait';
+      d.title = c.name;
+      d.style.animationDelay = ((i % 23) * 0.07) + 's';
+      board.appendChild(d);
+      return d;
+    });
+  }
+  function renderBoard(results) {
+    const board = $('#board');
+    board.textContent = '';
+    return results.map((r) => {
+      const d = document.createElement('span');
+      d.className = 'cell ' + cellState(r);
+      d.title = r.check.name;
+      board.appendChild(d);
+      return d;
+    });
+  }
+  function describe(r) {
+    if (!r.ok) return r.check.unavailable ? 'not checkable' : 'no answer';
+    if (cellState(r) === 'part') return 'partly answered';
+    const hit = r.holdings.filter((x) => x.amount > 0);
+    if (!hit.length) return 'nothing';
+    return fmtAmount(hit[0].amount) + ' ' + hit[0].symbol + (hit.length > 1 ? ' and ' + (hit.length - 1) + ' more' : '');
+  }
+  // Live progress for a set of checks: cells light up, the counter climbs, the ticker shows
+  // the latest answers, and the last few stragglers are named so a slow network is not a mystery.
+  function liveProgress(checks, ui) {
+    const cells = addCells($('#board'), checks);
+    const pending = new Set(checks.map((c, i) => i));
+    const recent = [];
+    const ticker = $('#ticker');
+    ui.meter.setAttribute('aria-valuemax', String(checks.length));
+    return (done, total, r, i) => {
+      pending.delete(i);
+      const st = cellState(r);
+      cells[i].className = 'cell ' + st + (reduced ? '' : ' pop');
+      ui.fill.style.width = (100 * done / total) + '%';
+      ui.meter.setAttribute('aria-valuenow', String(done));
+      if (ui.pct) ui.pct.innerHTML = Math.floor(100 * done / total) + '<small>%</small>';
+      const left = total - done;
+      const waitingOn = left > 0 && left <= 3 ? '. Waiting on ' + [...pending].map((k) => checks[k].name).join(', ') : '';
+      ui.text.textContent = done + ' of ' + total + ' ' + ui.noun + ' answered' + waitingOn;
+      recent.unshift({ name: r.check.name, said: describe(r), st });
+      recent.length = Math.min(recent.length, 3);
+      ticker.textContent = '';
+      for (const x of recent) {
+        const li = document.createElement('li'); li.className = x.st;
+        const n = document.createElement('span'); n.textContent = x.name;
+        const v = document.createElement('span'); v.className = 'r'; v.textContent = x.said;
+        li.append(n, v); ticker.appendChild(li);
+      }
+    };
   }
 
   // ---------------- the show ----------------
@@ -659,38 +729,75 @@
       return;
     }
     const caseId = shortAddr(addr.evm);
-    $('#case-id').textContent = 'case ' + caseId;
+    $('#case-id').textContent = caseId;
     $('#case-wallet').textContent = caseId;
     $('#stage').hidden = false;
 
     const checks = buildChecks(addr);
-    const meter = $('#meter'), fill = $('#meter-fill'), ptext = $('#progress-text');
-    meter.setAttribute('aria-valuemax', String(checks.length));
-    ptext.textContent = 'Checking ' + checks.length + ' networks';
-    state.results = await runChecks(checks, (done, total) => {
-      fill.style.width = (100 * done / total) + '%';
-      meter.setAttribute('aria-valuenow', String(done));
-      ptext.textContent = done + ' of ' + total + ' networks answered';
-    });
+    $('#stage-title').textContent = 'Checking ' + checks.length + ' networks';
+    const progress = liveProgress(checks, { meter: $('#meter'), fill: $('#meter-fill'), pct: $('#pct'), text: $('#progress-text'), noun: 'networks' });
+    state.results = await runChecks(checks, progress);
+    $('#meter').classList.add('done');
+    $('#progress-text').textContent = 'All ' + checks.length + ' networks answered. Adding it up';
     const v = await showVerdict(state.results);
 
-    // the reveal
-    const env = $('#envelope');
-    env.classList.remove('checking');
-    await wait(900);
-    env.classList.add('open');
-    await wait(750);
-    $('#stage').hidden = true;
+    // the reveal: the counter gives way to the verdict, the board stays as the summary
+    await wait(700);
+    $('#stage-head').hidden = true;
+    $('#ticker').hidden = true;
+    $('#stage').classList.add('summary');
     const verdictEl = $('#verdict');
     if (!reduced) verdictEl.classList.add('animate');
     verdictEl.hidden = false;
+    window.scrollTo && window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
     if (v.chainsWithCoins > 0 && !reduced) confetti();
     await wait(500);
     $('#more').hidden = !window.SeedScan || !window.SeedExtra;
     $('#casefile').hidden = false;
   }
 
-  const state = { results: [], extraDone: false };
+  const state = { results: [], extraDone: false, busy: false };
+
+  // A whole-wallet scan supersedes the first-address check it covers, but only if it answered;
+  // otherwise the first-address result stays, so nothing is lost and nothing is counted twice.
+  // If the wallet scan reports less than the single address did (an index lagging behind),
+  // keep the first-address result instead; never let one source erase coins another found.
+  function supersede(all, fresh) {
+    const total = (r) => r.holdings.reduce((a, x) => a + (x.amount > 0 ? x.amount : 0), 0);
+    const drop = new Set();
+    for (const w of fresh) {
+      if (!w.ok || !w.check.replaces) continue;
+      for (const old of all.filter((r) => r !== w && w.check.replaces.includes(r.check.name))) {
+        if (!old.ok || total(w) + 1e-12 >= total(old)) drop.add(old); else drop.add(w);
+      }
+    }
+    return all.filter((r) => !drop.has(r));
+  }
+
+  // Runs the networks that did not answer (or only partly) again, in place: their cells go back
+  // to waiting and light up as they answer, then the verdict, legend and rows are redone.
+  // A retry never makes things worse: a partial answer is kept if the retry gets no answer at all.
+  async function retry() {
+    if (state.busy) return;
+    const idx = state.results.map((r, i) => (retryable(r) ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return;
+    state.busy = true;
+    const btn = $('#retry');
+    btn.disabled = true;
+    const cells = renderBoard(state.results);
+    for (const i of idx) cells[i].className = 'cell wait';
+    btn.textContent = 'Retrying ' + plural(idx.length, 'network', 'networks');
+    const fresh = await runChecks(idx.map((i) => state.results[i].check), (done, total, r, k) => {
+      cells[idx[k]].className = 'cell ' + cellState(r) + (reduced ? '' : ' pop');
+      btn.textContent = 'Retrying: ' + done + ' of ' + total + ' answered';
+    });
+    const results = state.results.slice();
+    idx.forEach((i, k) => { if (fresh[k].ok || !results[i].ok) results[i] = fresh[k]; });
+    state.results = supersede(results, fresh.filter((r) => results.includes(r)));
+    await showVerdict(state.results);
+    btn.disabled = false;
+    state.busy = false;
+  }
 
   // Every price id the page can ask for goes in every request, so a request says nothing
   // about which coins this wallet holds.
@@ -702,7 +809,7 @@
 
   async function runChecks(checks, onProgress) {
     let done = 0;
-    return Promise.all(checks.map(async (c) => {
+    return Promise.all(checks.map(async (c, i) => {
       let r;
       try {
         if (c.unavailable) throw new Error(c.unavailable);
@@ -712,8 +819,9 @@
         r = { ok: false, error: e.message || String(e), holdings: [], others: 0, partial: null };
       }
       done++;
-      if (onProgress) onProgress(done, checks.length);
-      return Object.assign({ check: c }, r);
+      const res = Object.assign({ check: c }, r);
+      if (onProgress) onProgress(done, checks.length, res, i);
+      return res;
     }));
   }
 
@@ -749,8 +857,8 @@
     verdictEl.classList.remove('yes', 'no');
 
     if (answered === 0) {
-      textEl.innerHTML = 'The lab <em>lost the envelope.</em>';
-      subEl.textContent = 'No network answered. Check your connection and scan again.';
+      textEl.innerHTML = 'No network answered.';
+      subEl.textContent = 'Check your connection, then retry.';
       fineEl.textContent = '';
     } else if (chainsWithCoins > 0) {
       verdictEl.classList.add('yes');
@@ -767,6 +875,23 @@
       fineEl.textContent = (otherTokens ? plural(otherTokens, 'airdropped token', 'airdropped tokens') + ' found, which does not count. ' : '') + (gaps.length ? gaps.join(' and ') + ', so there is still a sliver of hope.' : '');
     }
     renderCaseFile(results, failed);
+    renderBoard(results);
+    const legend = $('#legend');
+    legend.textContent = '';
+    for (const [cls, n, one, many] of [['l-hit', chainsWithCoins, 'network with coins', 'networks with coins'], ['l-empty', answered - chainsWithCoins - partly, 'empty', 'empty'],
+      ['l-part', partly, 'partly answered', 'partly answered'], ['l-fail', failed, 'no answer', 'no answer'], ['l-skip', unavailable, 'not checkable', 'not checkable']]) {
+      if (!n && cls !== 'l-hit') continue;
+      const li = document.createElement('li'); li.className = cls;
+      const b = document.createElement('b'); b.textContent = String(n);
+      const t = document.createElement('span'); t.textContent = n === 1 ? one : many;
+      li.append(b, t);
+      legend.appendChild(li);
+    }
+    legend.hidden = false;
+    const again = results.filter(retryable).length;
+    const btn = $('#retry');
+    btn.hidden = again === 0;
+    btn.textContent = 'Retry ' + plural(again, 'network', 'networks') + ' that did not ' + (failed ? 'answer' : 'fully answer');
     return { chainsWithCoins };
   }
 
@@ -781,6 +906,11 @@
   };
   let stopCamera = null;
   function moreStatus(t) { $('#more-status').textContent = t; }
+  function frameBar(have, total) {
+    const bar = $('#more-frames');
+    bar.textContent = '';
+    for (let i = 0; i < total; i++) { const s = document.createElement('span'); if (i < have) s.className = 'got'; bar.appendChild(s); }
+  }
   function closeCamera() { if (stopCamera) { stopCamera(); stopCamera = null; } $('#more-cam').hidden = true; $('#more-start').hidden = state.extraDone; }
   // The moving QR must come from the same seed as the Portfolio QR: the segwit account key
   // it carries (0x70) derives the first segwit address, which the Portfolio QR also holds.
@@ -797,31 +927,25 @@
     }
     state.extraDone = true;
     closeCamera();
+    while (state.busy) await new Promise((r) => setTimeout(r, 100));   // a retry is still running
+    state.busy = true;
+    $('#retry').hidden = true;
     const checks = window.SeedExtra.build(records, extraHelpers);
-    $('#more-text').textContent = 'Checking ' + checks.length + ' more networks…';
-    const more = await runChecks(checks, (d, t) => { $('#more-text').textContent = d + ' of ' + t + ' more networks answered'; });
-    // A whole-wallet scan supersedes the first-address check it covers, but only if it answered;
-    // otherwise the first-address result stays, so nothing is lost and nothing is counted twice.
-    // If the wallet scan reports less than the single address did (an index lagging behind),
-    // keep the first-address result instead; never let one source erase coins another found.
+    $('#more-text').textContent = 'Checking ' + checks.length + ' more networks';
+    $('#more-meter').hidden = false;
+    const more = await runChecks(checks, liveProgress(checks, { meter: $('#more-meter'), fill: $('#more-fill'), text: $('#more-text'), noun: 'more networks' }));
+    $('#more-meter').classList.add('done');
     const before = state.results.length;
-    let all = state.results.concat(more);
-    const total = (r) => r.holdings.reduce((a, x) => a + (x.amount > 0 ? x.amount : 0), 0);
-    const drop = new Set();
-    for (const w of more) {
-      if (!w.ok || !w.check.replaces) continue;
-      for (const old of all.filter((r) => w.check.replaces.includes(r.check.name))) {
-        if (!old.ok || total(w) + 1e-12 >= total(old)) drop.add(old); else drop.add(w);
-      }
-    }
-    state.results = all.filter((r) => !drop.has(r));
+    state.results = supersede(state.results.concat(more), more);
     await showVerdict(state.results);
+    state.busy = false;
     $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR, including whole Bitcoin and Litecoin wallets and MetaMask accounts 2 to 5. The verdict above now covers ' + state.results.length + '.';
     $('#verdict').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
   }
   function startScan() {
     if (stopCamera || state.extraDone) return;
     const asm = new window.SeedScan.Assembler();
+    frameBar(0, 0);
     $('#more-cam').hidden = false;
     $('#more-start').hidden = true;
     moreStatus('Starting the camera…');
@@ -829,7 +953,7 @@
       if (stopCamera !== session || state.extraDone) return;
       const p = asm.add(text);
       if (p.error) moreStatus(p.error);
-      else if (p.total) moreStatus('Got ' + p.have + ' of ' + p.total + ' frames. Keep it steady.');
+      else if (p.total) { moreStatus('Got ' + p.have + ' of ' + p.total + ' frames. Keep it steady.'); frameBar(p.have, p.total); }
       if (p.done) {
         let recs;
         try { recs = window.SeedScan.records(p.bytes); } catch (e) { moreStatus('Those frames did not decode: ' + e.message); asm.reset(); return; }
@@ -857,19 +981,22 @@
       li.tabIndex = 0;
       const nonzero = r.holdings.filter((x) => x.amount > 0);
       if (nonzero.length) li.classList.add('has-coins');
+      if (!r.ok) li.classList.add(r.check.unavailable ? 'is-skip' : 'is-failed');
+      const dot = document.createElement('span'); dot.className = 'dot';
       const name = document.createElement('span'); name.className = 'name'; name.textContent = r.check.name;
       const addrShort = document.createElement('span'); addrShort.className = 'addr short'; addrShort.textContent = shortAddr(r.check.addr);
       const addrFull = document.createElement('span'); addrFull.className = 'addr full'; addrFull.textContent = r.check.addr;
       const amount = document.createElement('span'); amount.className = 'amount';
-      if (!r.ok) { amount.classList.add('failed'); amount.textContent = r.check.unavailable ? 'not checkable' : 'did not answer'; }
+      if (!r.ok) { amount.classList.add('failed'); if (r.check.unavailable) amount.classList.add('skip'); amount.textContent = r.check.unavailable ? 'not checkable' : 'did not answer'; }
       else if (!nonzero.length) { amount.classList.add('none'); amount.textContent = 'nothing'; }
       else {
         let usd = 0, anyUsd = false;
-        for (const x of nonzero) {
-          const line = document.createElement('span'); line.className = 'h'; line.textContent = fmtAmount(x.amount) + ' ' + x.symbol;
+        nonzero.forEach((x, k) => {
+          const line = document.createElement('span'); line.className = k < 3 ? 'h' : 'h later'; line.textContent = fmtAmount(x.amount) + ' ' + x.symbol;
           amount.appendChild(line);
           if (x.usd != null) { usd += x.usd; anyUsd = true; }
-        }
+        });
+        if (nonzero.length > 3) { const m = document.createElement('span'); m.className = 'h fold'; m.textContent = 'and ' + (nonzero.length - 3) + ' more'; amount.appendChild(m); }
         if (anyUsd) { const u = document.createElement('span'); u.className = 'usd'; u.textContent = fmtUsd(usd); amount.appendChild(u); }
       }
       const more = document.createElement('span'); more.className = 'more';
@@ -886,7 +1013,7 @@
         link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open in explorer';
         more.appendChild(link);
       }
-      li.append(name, amount, addrShort, addrFull, more);
+      li.append(dot, name, amount, addrShort, addrFull, more);
       const toggle = () => li.classList.toggle('expanded');
       li.addEventListener('click', (e) => { if (e.target.tagName !== 'A') toggle(); });
       li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
@@ -903,10 +1030,17 @@
   if (!frag) {
     $('#landing').hidden = false;
     $('#demo-link').href = '#' + DEMO_PAYLOAD;
+    const lb = $('#landing-board');
+    for (let i = 0; i < 152; i++) {
+      const d = document.createElement('span');
+      d.className = 'cell ' + ([7, 31, 58, 103].includes(i) ? 'hit' : [44, 120].includes(i) ? 'fail' : 'empty');
+      lb.appendChild(d);
+    }
   } else {
     run(frag);
   }
   $('#more-start').addEventListener('click', startScan);
   $('#more-stop').addEventListener('click', closeCamera);
+  $('#retry').addEventListener('click', retry);
   window.addEventListener('hashchange', () => location.reload());
 })();

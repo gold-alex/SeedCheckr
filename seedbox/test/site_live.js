@@ -124,6 +124,26 @@ vm.runInThisContext(appSrc, { filename: 'app.js' });
     const amt = amount.textContent || amount.children.map((c) => c.textContent).join(' ');
     console.log((li.classes.has('has-coins') ? '$ ' : '  ') + name.textContent.padEnd(22) + amt.padEnd(28) + (more.textContent || ''));
   }
+  // ---- health: fail loudly instead of leaving it to whoever reads the log ----
+  // every network that did not answer, every one that only partly answered, and whether the
+  // verdict is the one this payload should give (demo: a famous wallet; random: a fresh seed)
+  const all = els['#rows'].children.concat(quiet);
+  const field = (li, cls) => li.children.find((c) => c.className === cls);
+  const failedRows = all.filter((li) => field(li, 'amount').classes.has('failed') && field(li, 'amount').textContent === 'did not answer');
+  const partRows = all.filter((li) => /did not answer|\d+ of \d+ tokens checked|not every/i.test(field(li, 'more').textContent || ''));
+  console.log('=== health ===');
+  console.log(all.length + ' networks, ' + failedRows.length + ' did not answer, ' + partRows.length + ' partly answered');
+  for (const li of failedRows) console.log('  FAILED  ' + field(li, 'name').textContent.padEnd(22) + (field(li, 'more').textContent || ''));
+  for (const li of partRows) console.log('  PARTIAL ' + field(li, 'name').textContent.padEnd(22) + (field(li, 'more').textContent || ''));
+  const problems = [];
+  if (els['#casefile'].hidden) problems.push('timed out before the verdict');
+  const want = arg === 'demo' ? 'yes' : arg === 'random' ? 'no' : null;
+  if (want && !els['#verdict'].classes.has(want)) problems.push('verdict is "' + [...els['#verdict'].classes].join(',') + '", expected "' + want + '"');
+  const maxFail = Number(process.env.MAX_FAIL ?? 2);   // public nodes blink; more than a couple at once is a real break
+  if (failedRows.length > maxFail) problems.push(failedRows.length + ' networks did not answer (MAX_FAIL=' + maxFail + ')');
+  if (MORE && !/^Added /.test(els['#more-text'].textContent)) problems.push('the moving QR scan did not finish');
+  console.log(problems.length ? 'FAIL: ' + problems.join('; ') : 'PASS');
+  process.exitCode = problems.length ? 1 : 0;
   if (process.env.SHOWHOST) for (const e of log) if (e.url.includes(process.env.SHOWHOST)) console.log("HOST", e.status, e.acao, e.err, e.url.slice(0, 120));
   console.log('=== endpoints (CORS as a browser would see it, origin ' + ORIGIN + ') ===');
   const seen = new Map();
