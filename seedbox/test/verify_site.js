@@ -102,6 +102,14 @@ function decodeGrid(text) {
       if (r.data !== t) { fails++; console.log('FAIL plain QR v' + r.version + ': ' + t.slice(0, 30)); }
     }
   }
+  // every local script in the page carries the hash of its current contents (stamp.js), so a
+  // returning browser never mixes a new page with cached old scripts
+  const S = require('./stamp.js');
+  const html = fs.readFileSync(path.join(S.DOCS, 'index.html'), 'utf8');
+  for (const m of html.matchAll(/<script src="([a-z0-9_.-]+\.js)(\?v=([0-9a-f]+))?"/g)) {
+    total++;
+    if (m[3] !== S.stamp(m[1])) { fails++; console.log('FAIL: ' + m[1] + ' is not stamped with its current hash: run node stamp.js'); }
+  }
   console.log(`mnemonics: ${5 * N}, checks: ${total}, failures: ${fails}, longest payload: ${maxLen} chars, largest portfolio QR: v${maxVersion || '?'}`);
   process.exit(fails ? 1 : 0);
 })();

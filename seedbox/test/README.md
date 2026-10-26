@@ -13,6 +13,10 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     # then URL + payload -> the device's QR encoder -> jsQR (an unrelated reader) -> the same URL
     npm install && node verify_site.js 10     # N mnemonics of each length, 12 to 24 words
 
+    # after changing anything in docs/: stamp each script in index.html with its content hash, so a
+    # browser that cached the old files loads the new ones with the new page (verify_site fails if stale)
+    node stamp.js
+
     # "more chains" frames (docs/EXTENSIONS.md): random extension rows -> device framing (test_frames)
     # -> device QR encoder (test_qr -f) -> jsQR -> docs/scan.js, shuffled with duplicates -> same records
     node verify_frames.js 10
