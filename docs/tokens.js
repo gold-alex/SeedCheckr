@@ -175,6 +175,14 @@
     movr: [['WMOVR', '0x98878B06940aE243284CA214f92Bb71a2b032B8A', 18], ['USDC', '0xE3F5a90F9cb311505cd691a46596599aA1A0AD7D', 6]],
     zkevm: [['USDC', '0x37eAA0eF3549a5Bb7D431be78a3D99BD360d19e5', 6], ['USDT', '0x1E4a5963aBFD975d8c9021ce480b42188849D41d', 6], ['POL', '0x22B21BedDef74FE62F031D2c5c8F7a9F8a4b304D', 18]],
   };
+  // stablecoins of the non-EVM networks, trusted as they are (each checked on DefiLlama)
+  const STABLE = {
+    tron: ['TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn', 'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4'],
+    sui: ['0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC', '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT',
+      '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN', '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN'],
+    aptos: ['0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b', '0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b',
+      '0xf22bede237a07e121b56d91a491eb7bcdfd1f5907926a9e58338f964a01b17fa::asset::USDC', '0xf22bede237a07e121b56d91a491eb7bcdfd1f5907926a9e58338f964a01b17fa::asset::USDT'],
+  };
   const T22 = 1;   // Token-2022 program (the rest are classic SPL tokens)
   const SOL_TOP = [['SOL', 'So11111111111111111111111111111111111111112', 9], ['USDC', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 6], ['USDT', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', 6], ['PUMP', 'pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn', 6, T22], ['JitoSOL', 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', 9], ['JUP', 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', 6], ['JLP', '27G8MtK7VtTcCHkpASjSDdkWWYfoqT6ggEuKidVJidD4', 6], ['RENDER', 'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof', 8], ['PYUSD', '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo', 6, T22], ['PENGU', '2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv', 6], ['PYTH', 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3', 6], ['RAY', '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', 6], ['TRUMP', '6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN', 6], ['Bonk', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', 5], ['cbBTC', 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij', 8], ['mSOL', 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', 9], ['JTO', 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', 9], ['INF', '5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm', 9], ['$WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', 6], ['Fartcoin', '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump', 6], ['ETH', '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs', 8], ['ORCA', 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE', 6], ['bSOL', 'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1', 9], ['W', '85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ', 6], ['HNT', 'hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux', 8], ['POPCAT', '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', 9], ['USDS', 'USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA', 6]];
 
@@ -293,20 +301,23 @@
       const out = {};
       if (!slug) return out;
       const chunks = [];
+      let failed = 0;
       for (let i = 0; i < addrs.length && i < PRICED; i += 80) chunks.push(addrs.slice(i, i + 80));
       await Promise.all(chunks.map(async (chunk) => {
         try {
           const j = await D.fetchJSON('https://coins.llama.fi/prices/current/' + chunk.map((x) => slug + ':' + x).join(','));
           for (const [k, v] of Object.entries(j.coins || {})) if (v && typeof v.price === 'number') out[lc(k.slice(k.indexOf(':') + 1))] = v;
-        } catch (e) { /* stay unpriced */ }
+        } catch (e) { failed++; }      // its tokens stay unpriced; callers say prices were not checked
       }));
+      Object.defineProperty(out, 'failed', { value: failed });
       return out;
     }
-    // Total DEX liquidity (USD) behind a token on any chain; 0 when no pool trades it.
+    // Total DEX liquidity (USD) of the pools a token trades in, on either side (stablecoins and
+    // wrapped coins are mostly the quote side); 0 when no pool trades it.
     async function liquidity(addr) {
       const j = await D.fetchJSON('https://api.dexscreener.com/latest/dex/tokens/' + addr);
       let usd = 0;
-      for (const p of j.pairs || []) if (lc(p.baseToken && p.baseToken.address) === lc(addr)) usd += (p.liquidity && p.liquidity.usd) || 0;
+      for (const p of j.pairs || []) if (lc(p.baseToken && p.baseToken.address) === lc(addr) || lc(p.quoteToken && p.quoteToken.address) === lc(addr)) usd += (p.liquidity && p.liquidity.usd) || 0;
       return usd;
     }
 
@@ -497,14 +508,16 @@
           const list = await D.firstOk(src, ([kind, arg]) => listers[kind](arg, addr));
           const tokens = list.filter((t) => t.addr && (t.amount != null ? t.amount > 0 : t.dec >= 0 && t.dec <= 36 && /^\d+$/.test(String(t.raw)) && BigInt(t.raw) > 0n))
             .map((t) => ({ addr: t.addr, symbol: t.symbol || '?', amount: t.amount != null ? t.amount : D.units(BigInt(t.raw), t.dec), price: t.price }));
+          let noPrices = false;
           // the network's known big tokens first: a spammed wallet can list thousands
           const missing = tokens.filter((t) => t.price == null).map((t) => t.addr).sort((a, b) => known.has(lc(b)) - known.has(lc(a)));
           if (missing.length) {
             const p = await llamaPrices(LLAMA[c.key], missing);
             for (const t of tokens) if (t.price == null && p[lc(t.addr)]) t.price = p[lc(t.addr)].price;
+            if (p.failed) noPrices = true;
           }
           const r = await judge(tokens, known);
-          const partial = list.more ? 'first ' + list.length + ' tokens checked' : r.unverified ? 'token values not cross-checked' : null;
+          const partial = [list.more && 'first ' + list.length + ' tokens checked', noPrices && 'token prices not checked', !list.more && !noPrices && r.unverified && 'token values not cross-checked'].filter(Boolean).join('; ') || null;
           return { holdings: r.holdings, others: r.others, partial };
         } catch (e) { /* fall through to the fixed list */ }
       }
@@ -532,6 +545,21 @@
       }
       const what = src.length ? 'token list did not answer; only major tokens checked' : null;
       return { holdings, others: unpriced, partial: failed ? (list.length - failed) + ' of ' + list.length + ' tokens checked' : what, note: src.length || !list.length ? null : 'only major tokens checked' };
+    }
+
+    // ---- Tron, Sui, Aptos: a wallet's other tokens [{ addr, raw }], priced and sized by
+    // DefiLlama (which also knows their decimals), then the same liquidity check ----
+    async function other(slug, list, known) {
+      known = (known || []).concat(STABLE[slug] || []);
+      const p = await llamaPrices(slug, list.map((t) => t.addr));
+      const tokens = [], unpriced = [];
+      for (const t of list) {
+        const v = p[lc(t.addr)];
+        if (v && v.decimals >= 0 && v.decimals <= 36) tokens.push({ addr: t.addr, symbol: v.symbol || '?', amount: Number(BigInt(t.raw)) / 10 ** v.decimals, price: v.price });
+        else unpriced.push(t.addr);
+      }
+      const r = await judge(tokens, new Set(known.map(lc)));
+      return { holdings: r.holdings, others: r.others.length + unpriced.length, partial: p.failed ? 'token prices not checked' : r.unverified ? 'token values not cross-checked' : null };
     }
 
     // ---- Solana ----
@@ -575,7 +603,7 @@
       return { holdings: r.holdings, others: r.others.length, partial: partial || (r.unverified ? 'token values not cross-checked' : null) };
     }
 
-    return { evm, sol };
+    return { evm, sol, other };
   }
 
   return { make, SRC, TOP, LLAMA, SOL_TOP, MM, RABBY, DEFI, LP_NFT };

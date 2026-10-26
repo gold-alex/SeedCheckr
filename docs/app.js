@@ -249,6 +249,7 @@
     stables: { 'ibc/2CBC2EA121AE42563B08028466F37B600F2D7D4282342DE938283CC3FB2BC00E': USDC } };
 
   // api.mainnet-beta.solana.com refuses browser origins (403), so it is not on this list.
+  const SOL_STAKE_RPCS = ['https://public.rpc.solanavibestation.com'];   // the one public RPC that answers a stake-account search
   const SOL_RPCS = ['https://solana-rpc.publicnode.com', 'https://solana.leorpc.com/?api_key=FREE', 'https://rpc.solanatracker.io/public', 'https://public.rpc.solanavibestation.com'];
   const TRX_STABLES = { TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t: ['USDT', 'tether', 6], TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8: ['USDC', 'usd-coin', 6] };
   // Fallbacks for the single-source chains (each checked for browser CORS).
@@ -463,26 +464,59 @@
   }
   // SOL from an RPC, then every token: public RPCs refuse "list all token accounts", so
   // tokens.js asks Jupiter, else reads the biggest tokens' accounts (ata.js).
+  // Native staking: every stake account whose withdraw authority is this wallet (what
+  // Phantom, Solflare and Ledger Live create), at its full balance: stake, rewards and the
+  // rent reserve all come back to the wallet. Finding them needs getProgramAccounts on the
+  // Stake program, which most public RPCs refuse.
+  async function solStaked(addr) {
+    const accts = await firstOk(SOL_STAKE_RPCS, (u) => rpc(u, 'getProgramAccounts', ['Stake11111111111111111111111111111111111111',
+      { encoding: 'base64', dataSlice: { offset: 0, length: 0 }, filters: [{ dataSize: 200 }, { memcmp: { offset: 44, bytes: addr } }] }]));
+    if (!Array.isArray(accts)) throw new Error('unexpected answer');
+    return accts.reduce((sum, a) => sum + BigInt(a.account.lamports || 0), 0n);
+  }
   async function checkSol(addr) {
-    const r = await firstOk(SOL_RPCS, (u) => rpc(u, 'getBalance', [addr]));
+    const [r, staked] = await Promise.all([firstOk(SOL_RPCS, (u) => rpc(u, 'getBalance', [addr])), solStaked(addr).catch(() => null)]);
     let t;
     try { t = await TOKENS.sol(addr); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
-    return { holdings: [h('SOL', units(BigInt(r.value), 9), 'solana')].concat(t.holdings), others: t.others, partial: t.partial };
+    const holdings = [h('SOL', units(BigInt(r.value), 9), 'solana')];
+    if (staked) holdings.push(h('SOL (staked)', units(staked, 9), 'solana'));
+    return { holdings: holdings.concat(t.holdings), others: t.others, partial: [t.partial, staked === null && 'staking not checked'].filter(Boolean).join('; ') || null };
   }
   async function checkTrx(addr) {
     const j = await fetchJSON('https://api.trongrid.io/v1/accounts/' + addr);
     const d = (j.data && j.data[0]) || {};
     const holdings = [h('TRX', units(BigInt(d.balance || 0), 6), 'tron')];
-    let others = 0;
+    const rest = [];
     for (const entry of d.trc20 || []) for (const [contract, amt] of Object.entries(entry)) {
-      if (BigInt(amt) <= 0n) continue;
+      if (!/^\d+$/.test(String(amt)) || BigInt(amt) <= 0n) continue;
       if (TRX_STABLES[contract]) holdings.push(h(TRX_STABLES[contract][0], units(BigInt(amt), TRX_STABLES[contract][2]), TRX_STABLES[contract][1]));
-      else others++;
+      else rest.push({ addr: contract, raw: amt });
     }
-    return { holdings, others, partial: null };
+    // staked TRX (Stake 2.0): frozen, unfreezing, and frozen then lent out as resources; TRX
+    // others lent to this account (acquired_...) is theirs, not counted
+    const res = d.account_resource || {};
+    const n = (x) => BigInt(x || 0);
+    const staked = (d.frozenV2 || []).reduce((s, x) => s + n(x.amount), 0n) + (d.unfrozenV2 || []).reduce((s, x) => s + n(x.unfreeze_amount), 0n)
+      + n(res.delegated_frozenV2_balance_for_energy) + n(d.delegated_frozenV2_balance_for_bandwidth)
+      // Stake 1.0 (before 2023): frozen until the owner unfreezes it, so old wallets still hold it
+      + (d.frozen || []).reduce((s, x) => s + n(x.frozen_balance), 0n) + n(res.frozen_balance_for_energy && res.frozen_balance_for_energy.frozen_balance)
+      + n(d.delegated_frozen_balance_for_bandwidth) + n(res.delegated_frozen_balance_for_energy);
+    if (staked > 0n) holdings.push(h('TRX (staked)', units(staked, 6), 'tron'));
+    if (n(d.allowance) > 0n) holdings.push(h('TRX (voting rewards)', units(n(d.allowance), 6), 'tron'));
+    let t = { holdings: [], others: rest.length, partial: rest.length ? 'tokens not valued' : null };
+    if (rest.length) try { t = await TOKENS.other('tron', rest, Object.keys(TRX_STABLES)); } catch (e) { /* counted as others */ }
+    return { holdings: holdings.concat(t.holdings), others: t.others, partial: t.partial };
   }
+  // Spendable balances, plus what is staked: delegations, unbonding (still the owner's for
+  // up to a few weeks) and unclaimed rewards. Staking calls go to the second server first,
+  // so 48 chains do not queue up three more requests each on rest.cosmos.directory.
   async function checkCosmos(c, addr) {
-    const j = await firstOk([c.rest, c.rest2].filter(Boolean), (base) => fetchJSON(base + '/cosmos/bank/v1beta1/balances/' + addr + '?pagination.limit=200'));
+    const servers = [c.rest, c.rest2].filter(Boolean);
+    const ask = (list, path) => firstOk(list, (base) => fetchJSON(base + path));
+    const staking = servers.slice().reverse();
+    const [j, del, unb, rew] = await Promise.all([ask(servers, '/cosmos/bank/v1beta1/balances/' + addr + '?pagination.limit=200'),
+      ...['/cosmos/staking/v1beta1/delegations/' + addr, '/cosmos/staking/v1beta1/delegators/' + addr + '/unbonding_delegations', '/cosmos/distribution/v1beta1/delegators/' + addr + '/rewards']
+        .map((p) => ask(staking, p).catch((e) => (e.status === 404 || e.status === 501 ? {} : undefined)))]);   // 404/501: a chain without staking; anything else (a 429) was not checked
     let native = 0n, others = 0;
     const holdings = [];
     for (const b of j.balances || []) {
@@ -492,7 +526,27 @@
       else if (BigInt(b.amount) > 0n) others++;
     }
     holdings.unshift(h(c.symbol, units(native, c.dec), c.price));
-    return { holdings, others, partial: null };
+    // amounts are integers, except rewards, which carry 18 decimals of fraction
+    const whole = (x) => BigInt(String(x).split('.')[0] || '0');
+    let staked = 0n, rewards = 0n;
+    for (const d of (del && del.delegation_responses) || []) if (d.balance && d.balance.denom === c.denom) staked += whole(d.balance.amount);
+    // unbonding entries carry no denom: they are in the chain's bond denom, which is not always the
+    // row's coin (Noble stakes ustake, its row counts USDC), so they count only when it is
+    let unbonding = 0n;
+    for (const u of (unb && unb.unbonding_responses) || []) for (const e of u.entries || []) unbonding += whole(e.balance);
+    let missedUnbonding = false;
+    if (unbonding > 0n) {
+      const p = await ask(staking, '/cosmos/staking/v1beta1/params').catch(() => null);
+      if (p && p.params && p.params.bond_denom === c.denom) staked += unbonding; else if (!p) missedUnbonding = true;
+    }
+    for (const r of (rew && rew.total) || []) {
+      if (r.denom === c.denom) rewards += whole(r.amount);
+      else if (c.stables && c.stables[r.denom] && whole(r.amount) > 0n) { const st = c.stables[r.denom]; holdings.push(h(st[0] + ' (rewards)', units(whole(r.amount), st[1]), st[2])); }
+    }
+    if (staked > 0n) holdings.push(h(c.symbol + ' (staked)', units(staked, c.dec), c.price));
+    if (rewards > 0n) holdings.push(h(c.symbol + ' (rewards)', units(rewards, c.dec), c.price));
+    const missed = [del, unb, rew].some((x) => x === undefined) || missedUnbonding;
+    return { holdings, others, partial: missed ? 'staking not fully checked' : null };
   }
   // Perps account value, spot balances, staked HYPE and vault deposits on Hyperliquid itself.
   async function checkHyperliquid(addr) {
@@ -539,19 +593,39 @@
   // Sui's public JSON-RPC nodes send no CORS headers; the GraphQL service does.
   async function checkSui(addr) {
     const j = await fetchJSON('https://graphql.mainnet.sui.io/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-      query: 'query($a: SuiAddress!) { address(address: $a) { balances(first: 50) { nodes { coinType { repr } totalBalance } } } }', variables: { a: addr } }) });
+      query: 'query($a: SuiAddress!) { address(address: $a) { balances(first: 50) { nodes { coinType { repr } totalBalance } }'
+        + ' objects(filter: { type: "0x3::staking_pool::StakedSui" }, first: 50) { pageInfo { hasNextPage } nodes { contents { json } } } } }', variables: { a: addr } }) });
     if (j.errors && j.errors.length) throw new Error(j.errors[0].message || 'graphql error');
-    const nodes = (j.data && j.data.address && j.data.address.balances && j.data.address.balances.nodes) || [];
-    let native = 0n, others = 0;
-    for (const b of nodes) {
-      if (/::sui::SUI$/.test(b.coinType.repr)) native = BigInt(b.totalBalance);
-      else if (BigInt(b.totalBalance) > 0n) others++;
+    const a = (j.data && j.data.address) || {};
+    let native = 0n;
+    const rest = [];
+    for (const b of (a.balances && a.balances.nodes) || []) {
+      if (/^0x0*2::sui::SUI$/.test(b.coinType.repr)) native = BigInt(b.totalBalance);
+      else if (BigInt(b.totalBalance) > 0n) rest.push({ addr: b.coinType.repr, raw: b.totalBalance });
     }
-    return { holdings: [h('SUI', units(native, 9), 'sui')], others, partial: null };
+    // native staking: StakedSui objects, at their principal (rewards are paid on withdrawal)
+    const stakes = (a.objects && a.objects.nodes) || [];
+    const staked = stakes.reduce((s, o) => s + BigInt((o.contents && o.contents.json && o.contents.json.principal) || 0), 0n);
+    const holdings = [h('SUI', units(native, 9), 'sui')];
+    if (staked > 0n) holdings.push(h('SUI (staked)', units(staked, 9), 'sui'));
+    let t = { holdings: [], others: rest.length, partial: rest.length ? 'tokens not valued' : null };
+    if (rest.length) try { t = await TOKENS.other('sui', rest, ['0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC']); } catch (e) { /* counted as others */ }
+    const more = a.objects && a.objects.pageInfo && a.objects.pageInfo.hasNextPage ? 'first 50 stakes counted' : null;
+    return { holdings: holdings.concat(t.holdings), others: t.others, partial: [t.partial, more].filter(Boolean).join('; ') || null };
   }
+  // APT from the node; every other fungible asset from Aptos Labs' indexer (no key), valued
+  // like any other token
   async function checkApt(addr) {
-    const octas = await firstOk(APT_APIS, (base) => aptosBalance(base, addr));
-    return { holdings: [h('APT', units(octas, 8), 'aptos')], others: 0, partial: null };
+    const [octas, idx] = await Promise.all([firstOk(APT_APIS, (base) => aptosBalance(base, addr)),
+      fetchJSON('https://api.mainnet.aptoslabs.com/v1/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        query: 'query($a: String!) { current_fungible_asset_balances(where: { owner_address: { _eq: $a }, amount: { _gt: "0" } }, limit: 100) { asset_type amount } }', variables: { a: addr } }) }).catch(() => null)]);
+    const rows = (idx && !idx.errors && idx.data && idx.data.current_fungible_asset_balances) || null;
+    // amounts come as JSON numbers: past 2^53 they are approximate, which is fine for a value
+    const rest = (rows || []).filter((b) => !/^0x1::aptos_coin::AptosCoin$|^0x0*a$/.test(b.asset_type) && Number(b.amount) > 0)
+      .map((b) => ({ addr: b.asset_type, raw: /^\d+$/.test(String(b.amount)) ? String(b.amount) : BigInt(Math.trunc(Number(b.amount))).toString() }));
+    let t = { holdings: [], others: rest.length, partial: !rows ? 'tokens not checked' : rows.length >= 100 ? 'first 100 tokens checked' : null };
+    if (rest.length) try { const cut = t.partial; t = await TOKENS.other('aptos', rest, ['0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b']); t.partial = [cut, t.partial].filter(Boolean).join('; ') || null; } catch (e) { t.partial = 'tokens not valued'; }
+    return { holdings: [h('APT', units(octas, 8), 'aptos')].concat(t.holdings), others: t.others, partial: t.partial };
   }
 
   // CashAddr (BCH and eCash address format) for the legacy Bitcoin address's hash.

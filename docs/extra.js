@@ -311,8 +311,8 @@
     cardanoBase: (pay, stake) => bech32('addr', toWords(cat(Uint8Array.of(0x01), pay, stake))),
     cardanoStake: (stake) => bech32('stake', toWords(cat(Uint8Array.of(0xe1), stake))),
     // account extended public key from a 0x70-0x73 record: fp(4) || chain code(32) || pubkey(33)
-    xpub: (rec, version) => base58check(cat(Uint8Array.of(version >>> 24, (version >>> 16) & 255, (version >>> 8) & 255, version & 255, 3),
-      rec.slice(0, 4), Uint8Array.of(0x80, 0, 0, 0), rec.slice(4, 36), rec.slice(36, 69))),
+    xpub: (rec, version, account = 0) => base58check(cat(Uint8Array.of(version >>> 24, (version >>> 16) & 255, (version >>> 8) & 255, version & 255, 3),
+      rec.slice(0, 4), Uint8Array.of(0x80, 0, 0, account), rec.slice(4, 36), rec.slice(36, 69))),
   };
   const XPUB = 0x0488b21e, YPUB = 0x049d7cb2, ZPUB = 0x04b24746;
 
@@ -344,6 +344,13 @@
     const post = (body) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const out = [];
     const add = (name, a, explorer, run, extra) => out.push(Object.assign({ name, addr: a, explorer, run }, extra || {}));
+    // A whole wallet from its xpub: Haskoin walks every used address, receive and change.
+    const haskoin = async (xpub, chain, derive, symbol, price) => {
+      const j = await fetchJSON('https://api.haskoin.com/' + chain + '/xpub/' + xpub + '?derive=' + derive);
+      if (!j.balance || j.balance.confirmed === undefined) throw new Error('unexpected answer');
+      const used = j.indices ? (j.indices.external || 0) + (j.indices.change || 0) : 0;
+      return { holdings: [h(symbol, units(BigInt(j.balance.confirmed) + BigInt(j.balance.unconfirmed || 0), 8), price)], others: 0, partial: null, note: used ? used + ' addresses used' : null };
+    };
     // One address of a whole-wallet scan -> { used, sats }, from whichever API `src` names.
     const utxoQuery = async (src, a, symbol) => {
       if (src.startsWith('https://')) {   // mempool.space-style (Esplora)
@@ -540,12 +547,7 @@
         case 0x70: case 0x71: case 0x72: case 0x73: {
           if (b.length !== 69) break;
           const shown = addr.xpub(b, type === 0x70 ? ZPUB : type === 0x72 ? YPUB : XPUB), query = addr.xpub(b, XPUB);
-          const wallet = (chain, derive, symbol, price) => async () => {
-            const j = await fetchJSON('https://api.haskoin.com/' + chain + '/xpub/' + query + '?derive=' + derive);
-            if (!j.balance || j.balance.confirmed === undefined) throw new Error('unexpected answer');
-            const used = j.indices ? (j.indices.external || 0) + (j.indices.change || 0) : 0;
-            return { holdings: [h(symbol, units(BigInt(j.balance.confirmed) + BigInt(j.balance.unconfirmed || 0), 8), price)], others: 0, partial: null, note: used ? used + ' addresses used' : null };
-          };
+          const wallet = (chain, derive, symbol, price) => () => haskoin(query, chain, derive, symbol, price);
           const ex = 'https://blockchair.com/bitcoin/xpub/';
           if (type === 0x70) add('Bitcoin wallet (segwit, every address)', shown, ex, wallet('btc', 'segwit', 'BTC', 'bitcoin'), { replaces: ['Bitcoin'] });
           if (type === 0x71) {
@@ -554,6 +556,24 @@
           }
           if (type === 0x72) add('Bitcoin wallet (nested segwit, every address)', shown, ex, wallet('btc', 'compat', 'BTC', 'bitcoin'), { replaces: ['Bitcoin nested segwit (3...)'] });
           if (type === 0x73) add('Bitcoin Cash wallet (every address)', shown, 'https://blockchair.com/bitcoin-cash/xpub/', wallet('bch', 'normal', 'BCH', 'bitcoin-cash'), { replaces: ['Bitcoin Cash (BCH wallets)'] });
+          break;
+        }
+        // ---- Bitcoin native segwit accounts 2 and 3 (m/84'/0'/1', m/84'/0'/2'): two account keys ----
+        case 0x7D: {
+          if (b.length !== 138) break;
+          for (let n = 1; n <= 2; n++) {
+            const k = b.slice(69 * (n - 1), 69 * n), shown = addr.xpub(k, ZPUB, n), query = addr.xpub(k, XPUB, n);
+            add('Bitcoin account ' + (n + 1) + ' (segwit, every address)', shown, 'https://blockchair.com/bitcoin/xpub/', () => haskoin(query, 'btc', 'segwit', 'BTC', 'bitcoin'));
+          }
+          break;
+        }
+        // ---- Phantom / Solflare accounts 2-5 (m/44'/501'/1..4'/0'): four public keys ----
+        case 0x7C: {
+          if (b.length !== 128) break;
+          for (let n = 1; n <= 4; n++) {
+            const a = base58(b.slice(32 * (n - 1), 32 * n));
+            add('Solana account ' + (n + 1) + ' (Phantom, Solflare)', a, 'https://solscan.io/account/', () => K.checkSol(a));
+          }
           break;
         }
         // ---- whole wallets the page scans itself (no xpub service with browser access) ----

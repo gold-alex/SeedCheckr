@@ -70,7 +70,7 @@ for (const m of mns) {
   const ext = dev.slice(20);                                                          // device rows after the 20 core rows
   const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x7F);                  // account xpub records
   ok(recs.length - acct.length === ext.length, 'one record per device extension row (' + (recs.length - acct.length) + ' vs ' + ext.length + ')');
-  ok(acct.length === 12, "twelve account records");
+  ok(acct.length === 14, "fourteen account records");
   const built = X.build(recs, K);
   const pageAddrs = new Set(built.map((c) => c.addr.replace(/^[PX]-/, '')));
   for (const [name, a] of ext) {
@@ -119,6 +119,15 @@ for (const m of mns) {
     const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();c=b.Bip44.FromSeed(s,b.Bip44Coins.ETHEREUM).Purpose().Coin();print('\\n'.join(c.Account(i).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress() for i in range(1,5)))", m], { encoding: 'utf8' }).trim().split('\n');
     for (let i = 0; i < 4; i++) ok(ledger[i] === ref[i], 'Ledger Live account ' + (i + 2) + ' == bip_utils');
   } catch (e) { console.log('(bip_utils not available: skipped the Ledger Live check)'); }
+  // Phantom accounts 2-5 (m/44'/501'/i'/0') and Bitcoin segwit accounts 2-3 (m/84'/0'/1', 2')
+  const phantom = built.filter((c) => / \(Phantom, Solflare\)$/.test(c.name)).map((c) => c.addr);
+  const btcAcct = built.filter((c) => /^Bitcoin account [23] /.test(c.name)).map((c) => c.addr);
+  ok(phantom.length === 4 && btcAcct.length === 2, 'page builds 4 Phantom and 2 Bitcoin accounts');
+  try {
+    const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();c=b.Bip44.FromSeed(s,b.Bip44Coins.SOLANA).Purpose().Coin();print('\\n'.join(c.Account(i).Change(b.Bip44Changes.CHAIN_EXT).PublicKey().ToAddress() for i in range(1,5)));w=b.Bip84.FromSeed(s,b.Bip84Coins.BITCOIN).Purpose().Coin();print('\\n'.join(w.Account(i).PublicKey().ToExtended() for i in (1,2)))", m], { encoding: 'utf8' }).trim().split('\n');
+    for (let i = 0; i < 4; i++) ok(phantom[i] === ref[i], 'Phantom account ' + (i + 2) + ' == bip_utils');
+    for (let i = 0; i < 2; i++) ok(btcAcct[i] === ref[4 + i], 'Bitcoin segwit account ' + (i + 2) + ' zpub == bip_utils');
+  } catch (e) { console.log('(bip_utils not available: skipped the Phantom / Bitcoin account check)'); }
   for (const r of recs) types.add(r.type);
 }
 console.log('mnemonics: ' + mns.length + ', record types: ' + types.size + ', checks: ' + checks + ', failures: ' + fails);

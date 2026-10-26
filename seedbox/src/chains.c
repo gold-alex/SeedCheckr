@@ -190,7 +190,19 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     uint8_t pkh[20]; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, pkh);
     segwit_addr_encode(out[2].addr, "bc", 0, pkh, 20);
     memcpy(out[2].raw, pkh, 20); out[2].rawlen = 20;
-    k = 3; if (progress) progress(k, chains_count()); }
+    k = 3; if (progress) progress(k, chains_count());
+    // native segwit accounts 2 and 3 (m/84'/0'/1', m/84'/0'/2', Ledger Live / Sparrow "add account"):
+    // two account keys in the cu_xpub_record layout back to back, record 0x7D (138 bytes) on row 2
+    for (uint32_t a = 1; a <= 2; a++) {
+      n = parent;
+      if (!hdnode_private_ckd(&n, a|H)) goto done;
+      hdnode_fill_public_key(&n);
+      uint8_t* x = out[2].xraw + 69 * (a - 1);
+      x[0] = fp >> 24; x[1] = fp >> 16; x[2] = fp >> 8; x[3] = fp;
+      memcpy(x + 4, n.chain_code, 32);
+      memcpy(x + 36, n.public_key, 33);
+    }
+    out[2].xlen = 138; out[2].ext2 = 0x7D; }
 
   // ---- BTC legacy xpub ----
   { uint32_t p[] = { 44|H, 0|H };
@@ -241,6 +253,15 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     size_t sz = CHAIN_ADDR_MAX; b58enc(out[6].addr, &sz, n.public_key + 1, 32);
     memcpy(out[6].raw, n.public_key + 1, 32); out[6].rawlen = 32;
     k = 7; if (progress) progress(k, chains_count()); }
+
+  // ---- Phantom / Solflare accounts 2-5: m/44'/501'/i'/0'. ed25519 has only hardened steps,
+  //      so the four public keys ride as record 0x7C (128 bytes) on the SOL row. ----
+  { for (uint32_t i = 1; i <= 4; i++) {
+      uint32_t p[] = { 44|H, 501|H, i|H, 0|H };
+      if (cu_derive(&n, seed, ED25519_NAME, p, 4)) goto done;
+      memcpy(out[6].xraw + 32 * (i - 1), n.public_key + 1, 32);
+    }
+    out[6].xlen = 128; out[6].ext2 = 0x7C; }
 
   // ---- TRX ----
   { uint32_t p[] = { 44|H, 195|H, 0|H, 0, 0 };
