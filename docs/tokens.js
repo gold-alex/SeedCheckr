@@ -35,7 +35,7 @@
   // fx = Fantom GraphQL API. MM and RABBY below add mm / rb fallbacks.
   const SRC = {
     eth: [['rs', '1'], ['bs', 'https://eth.blockscout.com'], ['ep', 'https://api.ethplorer.io']],
-    base: [['bs', 'https://base.blockscout.com']],   // its Etherscan-style API is the same server: no help when that times out
+    base: [],   // Blockscout's token list takes 6-8 s for an ordinary wallet here, so MetaMask (below) goes first
     arb: [['bs', 'https://arbitrum.blockscout.com']],
     op: [['bs', 'https://explorer.optimism.io']],
     polygon: [['bs', 'https://polygon.blockscout.com']],
@@ -139,6 +139,7 @@
     mode: [['Velodrome', '0x991d5546C4B442B4c5fdc4c8B8b8d131DEB24702', 1]],
   };
   for (const [k, id] of Object.entries(MM)) (SRC[k] = SRC[k] || []).push(['mm', String(id)]);
+  SRC.base.push(['bs', 'https://base.blockscout.com']);
   for (const [k, id] of Object.entries(RABBY)) (SRC[k] = SRC[k] || []).push(['rb', id]);
   // DefiLlama chain names, for tokens a source lists without a price
   const LLAMA = {
