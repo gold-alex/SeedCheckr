@@ -215,6 +215,13 @@
   const MIN_LIQ = 20000;  // USD in pools below which an unlisted token is airdrop bait, not money
   const PAGES = 4;        // token-list pages read per address (a spammed wallet can list thousands)
   const PRICED = 400;     // unpriced tokens sent to DefiLlama, 80 per request
+  const DEX_MAX = 60;     // tokens per network DefiLlama could not price that are looked up on DexScreener, 30 per request
+  const DEX_CALLS = 90;   // DexScreener price lookups per minute: it allows 300, and its liquidity checks need the rest
+  // DexScreener's chain ids, each confirmed with tokens known on that network
+  const DS = { eth: 'ethereum', base: 'base', arb: 'arbitrum', op: 'optimism', polygon: 'polygon', bsc: 'bsc', avax: 'avalanche', linea: 'linea', scroll: 'scroll',
+    blast: 'blast', zksync: 'zksync', mantle: 'mantle', sonic: 'sonic', ftm: 'fantom', celo: 'celo', cro: 'cronos', opbnb: 'opbnb', bera: 'berachain', uni: 'unichain',
+    world: 'worldchain', hyperevm: 'hyperevm', kavaevm: 'kava', metis: 'metis', tlos: 'telos', cfx: 'conflux', abs: 'abstract', ink: 'ink', soneium: 'soneium',
+    seievm: 'seiv2', monad: 'monad', fuse: 'fuse', plasma: 'plasma', pls: 'pulsechain', ape: 'apechain', megaeth: 'megaeth', hood: 'robinhood' };
   const LP_MAX = 20;      // liquidity NFTs read per position manager, newest first
 
   const MM_API = 'https://accounts.api.cx.metamask.io/v4/multiaccount/balances';
@@ -337,15 +344,50 @@
       return out;
     }
     // Total DEX liquidity (USD) of the pools a token trades in, on either side (stablecoins and
-    // wrapped coins are mostly the quote side); 0 when no pool trades it.
+    // wrapped coins are mostly the quote side); 0 when no pool trades it. Each pool counts at
+    // twice what its other side holds, not at DexScreener's dollar figure: a pool it called
+    // $469k held $15 of WBNB against a mountain of the token itself.
     async function liquidity(addr) {
       const j = await D.fetchJSON('https://api.dexscreener.com/latest/dex/tokens/' + addr);
       let usd = 0;
-      for (const p of j.pairs || []) if (lc(p.baseToken && p.baseToken.address) === lc(addr) || lc(p.quoteToken && p.quoteToken.address) === lc(addr)) usd += (p.liquidity && p.liquidity.usd) || 0;
+      for (const p of j.pairs || []) {
+        const l = p.liquidity || {}, px = Number(p.priceUsd), pn = Number(p.priceNative);
+        let other = 0;
+        if (lc(p.baseToken && p.baseToken.address) === lc(addr)) other = px > 0 && pn > 0 ? Number(l.quote) * px / pn : 0;   // quote's price = base's USD price / base's price in quote
+        else if (lc(p.quoteToken && p.quoteToken.address) === lc(addr)) other = Number(l.base) * px;
+        else continue;
+        if (other > 0) usd += Math.min(2 * other, Number(l.usd) || Infinity);
+      }
       return usd;
     }
 
     // tokens [{ addr, symbol, amount, price }] -> { holdings, others: [addr], unverified }
+    // Tokens no price API knows (a memecoin launched last week): their DexScreener pools,
+    // counted only where the other side is a token DefiLlama itself prices with confidence, so
+    // a pool of two junk tokens proves nothing. Price = the deepest such pool's rate times that
+    // side's price; liquidity = twice what that side holds, over all such pools. DexScreener's
+    // own dollar figures are not used. -> { addr: { price, liq } }
+    const dexCalls = [];   // when each recent lookup went out
+    const dexBudget = () => { const now = Date.now(); while (dexCalls.length && now - dexCalls[0] > 60000) dexCalls.shift(); if (dexCalls.length >= DEX_CALLS) return false; dexCalls.push(now); return true; };
+    async function dexPrices(key, addrs) {
+      const out = {}, ds = DS[key];
+      if (!ds || !addrs.length) return out;
+      const want = new Set(addrs.map(lc)), chunks = [];
+      for (let i = 0; i < addrs.length && i < DEX_MAX; i += 30) { if (!dexBudget()) { out.cut = true; break; } chunks.push(addrs.slice(i, i + 30)); }
+      const pairs = (await Promise.all(chunks.map((ch) => D.fetchJSON('https://api.dexscreener.com/tokens/v1/' + ds + '/' + ch.join(','), { retry: false }).catch(() => []))))
+        .flat().filter((p) => p && p.chainId === ds && p.baseToken && p.quoteToken && want.has(lc(p.baseToken.address)) && p.liquidity && Number(p.liquidity.quote) > 0 && Number(p.priceNative) > 0);
+      if (!pairs.length) return out;
+      const qp = await llamaPrices(LLAMA[key], [...new Set(pairs.map((p) => lc(p.quoteToken.address)))]);
+      for (const p of pairs) {
+        const q = qp[lc(p.quoteToken.address)];
+        if (!q || !(q.price > 0) || !(q.confidence >= 0.9) || want.has(lc(p.quoteToken.address))) continue;
+        const a = lc(p.baseToken.address), liq = 2 * Number(p.liquidity.quote) * q.price;
+        const o = out[a] = out[a] || { liq: 0, best: 0, price: null };
+        o.liq += liq;
+        if (liq > o.best) { o.best = liq; o.price = Number(p.priceNative) * q.price; }
+      }
+      return out;
+    }
     async function judge(tokens, known) {
       const holdings = [], others = [];
       let unverified = 0;
@@ -540,8 +582,16 @@
             for (const t of tokens) if (t.price == null && p[lc(t.addr)]) t.price = p[lc(t.addr)].price;
             if (p.failed) noPrices = true;
           }
+          // still unpriced: DexScreener (fresh memecoins), never for spam whose name is a link or a "claim"
+          const spam = (t) => /https?:|www\.|\.(com|io|org|net|xyz|app|site|vip|cc|me|us|gg)\b|t\.me|claim|visit|reward|airdrop|voucher|\$\s?\d/i.test(t.symbol || '');
+          const unpriced = tokens.filter((t) => t.price == null && !spam(t)).map((t) => t.addr);
+          let dx = {};
+          if (unpriced.length) {
+            dx = await dexPrices(c.key, unpriced).catch(() => ({}));
+            for (const t of tokens) { const d = dx[lc(t.addr)]; if (t.price == null && d && d.price > 0) { t.price = d.price; t.liq = d.liq; } }
+          }
           const r = await judge(tokens, known);
-          const partial = [list.more && 'first ' + list.length + ' tokens checked', noPrices && 'token prices not checked', !list.more && !noPrices && r.unverified && 'token values not cross-checked'].filter(Boolean).join('; ') || null;
+          const partial = [list.more && 'first ' + list.length + ' tokens checked', noPrices && 'token prices not checked', dx.cut && 'not every unknown token looked up', !list.more && !noPrices && r.unverified && 'token values not cross-checked'].filter(Boolean).join('; ') || null;
           return { holdings: r.holdings, others: r.others, partial };
         } catch (e) { /* fall through to the fixed list */ }
       }
