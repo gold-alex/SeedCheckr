@@ -290,18 +290,26 @@
     q.busy++;
     try { return await fn(); } finally { q.busy--; const next = q.wait.shift(); if (next) next(); }
   }
+  // A host that has let three requests in a row run 5 s or more into their timeout, and
+  // answered none since, is taken as down: further requests to it fail at once, so a wallet
+  // scan's next address goes straight to the fallback instead of waiting 15 s each time.
+  const silent = new Map();
+  const notAnswering = (host) => { if ((silent.get(host) || 0) >= 3) throw new Error('not answering'); };
   async function fetchOnce(url, opts, timeoutMs, as) {
-    const deadline = Date.now() + (timeoutMs || 15000);
+    const deadline = Date.now() + (timeoutMs || 15000), host = new URL(url).host;
     for (let attempt = 0; ; attempt++) {
+      notAnswering(host);
       if (Date.now() >= deadline) throw timeoutError();
       const res = await withHost(url, deadline, async () => {
+        notAnswering(host);   // it may have been found down while this request queued
         const c = new AbortController();
         const timer = setTimeout(() => c.abort(), Math.max(1, deadline - Date.now()));
+        const t0 = Date.now();
         try {
           let r;
-          try { r = await fetch(url, Object.assign({}, opts, { signal: c.signal })); }
+          try { r = await fetch(url, Object.assign({}, opts, { signal: c.signal })); silent.set(host, 0); }
           catch (e) {
-            if (e && e.name === 'AbortError') throw timeoutError();
+            if (e && e.name === 'AbortError') { if (Date.now() - t0 >= 5000) silent.set(host, (silent.get(host) || 0) + 1); throw timeoutError(); }
             // A 429/5xx without CORS headers reaches the page as a network error, not a
             // status (Haskoin's 503s do this), so a network error is retried like one.
             return { retry: 'network error' };
@@ -314,7 +322,7 @@
       });
       if (!res.retry) return res.body;
       // a CORS-blocked 4xx also looks like a network error, so those get one retry, not two
-      const maxAttempts = res.retry === 'network error' ? 1 : 2;
+      const maxAttempts = opts && opts.retry === false ? 0 : res.retry === 'network error' ? 1 : 2;   // retry: false, a server whose 429 means minutes
       if (attempt >= maxAttempts || Date.now() + 700 * (attempt + 1) >= deadline) { const e = new Error(typeof res.retry === 'number' ? 'HTTP ' + res.retry : res.retry); if (typeof res.retry === 'number') e.status = res.retry; throw e; }
       await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
     }
@@ -326,10 +334,28 @@
     if (j.error) throw new Error(j.error.message || 'rpc error');
     return j.result;
   }
-  async function firstOk(urls, fn) {
-    let last;
-    for (const u of urls) { try { return await fn(u); } catch (e) { last = e; } }
-    throw last || new Error('no endpoint answered');
+  // The first source that answers, tried in order. One that has said nothing after HEDGE_MS
+  // gets company from the next, so a server that is down (most fail by timing out, after 15 s)
+  // does not hold the verdict up; whichever answers first wins.
+  const HEDGE_MS = 4000;
+  function firstOk(urls, fn) {
+    return new Promise((resolve, reject) => {
+      let next = 0, running = 0, done = false, last, timer = null;
+      const start = () => {
+        clearTimeout(timer);
+        if (done || next >= urls.length) return;
+        const u = urls[next++];
+        running++;
+        timer = setTimeout(start, HEDGE_MS);
+        Promise.resolve().then(() => fn(u)).then((v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } }, (e) => {
+          last = e; running--;
+          if (done) return;
+          if (next < urls.length) start();
+          else if (!running) { done = true; reject(last); }
+        });
+      };
+      if (!urls.length) reject(new Error('no endpoint answered')); else start();
+    });
   }
   // integer string / hex / bigint in base units -> float
   function units(v, dec) {
@@ -390,8 +416,13 @@
     return firstOk(BTC_APIS, (b) => checkMempoolStyle(b, addr, 'BTC', 'bitcoin'));
   }
   async function checkLtc(addr) {
-    return firstOk(['mempool', 'blockcypher'], async (src) => {
+    return firstOk(['mempool', 'bitcore', 'blockcypher'], async (src) => {
       if (src === 'mempool') return checkMempoolStyle('https://litecoinspace.org/api/address/', addr, 'LTC', 'litecoin');
+      if (src === 'bitcore') {
+        const j = await fetchJSON('https://api.bitcore.io/api/LTC/mainnet/address/' + addr + '/balance');
+        if (j.balance === undefined) throw new Error('unexpected answer');
+        return { holdings: [h('LTC', units(BigInt(j.balance), 8), 'litecoin')], others: 0, partial: null };
+      }
       const j = await fetchJSON('https://api.blockcypher.com/v1/ltc/main/addrs/' + addr + '/balance');
       return { holdings: [h('LTC', units(BigInt(j.final_balance), 8), 'litecoin')], others: 0, partial: null };
     });
@@ -590,12 +621,44 @@
     else drops = BigInt(r.account_data.Balance);
     return { holdings: [h('XRP', units(drops, 6), 'ripple')], others: 0, partial: null };
   }
-  // Sui's public JSON-RPC nodes send no CORS headers; the GraphQL service does.
-  async function checkSui(addr) {
-    const j = await fetchJSON('https://graphql.mainnet.sui.io/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-      query: 'query($a: SuiAddress!) { address(address: $a) { balances(first: 50) { nodes { coinType { repr } totalBalance } }'
-        + ' objects(filter: { type: "0x3::staking_pool::StakedSui" }, first: 50) { pageInfo { hasNextPage } nodes { contents { json } } } } }', variables: { a: addr } }) });
+  // Sui's public JSON-RPC nodes send no CORS headers (and are being retired); the GraphQL service does.
+  const suiQuery = async (query, variables) => {
+    const j = await fetchJSON('https://graphql.mainnet.sui.io/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables }) });
     if (j.errors && j.errors.length) throw new Error(j.errors[0].message || 'graphql error');
+    return j.data;
+  };
+  // Staking rewards, as Sui's own estimate works them out: the stake bought pool tokens at
+  // its pool's exchange rate in the epoch it became active, and they are worth the pool's
+  // rate now. Stakes with a validator that has since left the active set get no reward here.
+  async function suiRewards(stakes) {
+    const pools = {};
+    let after = null, epoch = 0;
+    for (let page = 0; page < 6; page++) {
+      const d = await suiQuery('query($c: String) { epoch { epochId validatorSet { activeValidators(first: 50, after: $c) { pageInfo { hasNextPage endCursor } nodes { contents { json } } } } } }', { c: after });
+      epoch = Number(d.epoch.epochId);
+      const v = d.epoch.validatorSet.activeValidators;
+      for (const n of v.nodes) { const p = n.contents && n.contents.json && n.contents.json.staking_pool; if (p) pools[p.id] = p; }
+      if (!v.pageInfo.hasNextPage) break;
+      after = v.pageInfo.endCursor;
+    }
+    const due = stakes.filter((s) => pools[s.pool_id] && Number(s.stake_activation_epoch) < epoch);
+    if (!due.length) return 0n;
+    // each rate is a table entry keyed by epoch (u64, little-endian, base64): one aliased query
+    const key = (n) => { let x = BigInt(n), b = ''; for (let i = 0; i < 8; i++) { b += String.fromCharCode(Number(x & 255n)); x >>= 8n; } return btoa(b); };
+    const d = await suiQuery('query { ' + due.map((s, i) => 'r' + i + ': address(address: "' + pools[s.pool_id].exchange_rates.id + '") { dynamicField(name: { type: "u64", bcs: "' + key(s.stake_activation_epoch) + '" }) { value { ... on MoveValue { json } } } }').join(' ') + ' }');
+    let reward = 0n;
+    due.forEach((s, i) => {
+      const r = d['r' + i] && d['r' + i].dynamicField && d['r' + i].dynamicField.value && d['r' + i].dynamicField.value.json, p = pools[s.pool_id];
+      if (!r || !(BigInt(r.sui_amount) > 0n) || !(BigInt(p.pool_token_balance) > 0n)) return;
+      const tokens = BigInt(s.principal) * BigInt(r.pool_token_amount) / BigInt(r.sui_amount);
+      const now = tokens * BigInt(p.sui_balance) / BigInt(p.pool_token_balance);
+      if (now > BigInt(s.principal)) reward += now - BigInt(s.principal);
+    });
+    return reward;
+  }
+  async function checkSui(addr) {
+    const j = { data: await suiQuery('query($a: SuiAddress!) { address(address: $a) { balances(first: 50) { nodes { coinType { repr } totalBalance } }'
+        + ' objects(filter: { type: "0x3::staking_pool::StakedSui" }, first: 50) { pageInfo { hasNextPage } nodes { contents { json } } } } }', { a: addr }) };
     const a = (j.data && j.data.address) || {};
     let native = 0n;
     const rest = [];
@@ -603,29 +666,46 @@
       if (/^0x0*2::sui::SUI$/.test(b.coinType.repr)) native = BigInt(b.totalBalance);
       else if (BigInt(b.totalBalance) > 0n) rest.push({ addr: b.coinType.repr, raw: b.totalBalance });
     }
-    // native staking: StakedSui objects, at their principal (rewards are paid on withdrawal)
-    const stakes = (a.objects && a.objects.nodes) || [];
-    const staked = stakes.reduce((s, o) => s + BigInt((o.contents && o.contents.json && o.contents.json.principal) || 0), 0n);
+    // native staking: StakedSui objects, principal plus the rewards they have earned
+    const stakes = ((a.objects && a.objects.nodes) || []).map((o) => (o.contents && o.contents.json) || {});
+    const staked = stakes.reduce((s, o) => s + BigInt(o.principal || 0), 0n);
+    const rewards = staked > 0n ? await suiRewards(stakes).catch(() => null) : 0n;
     const holdings = [h('SUI', units(native, 9), 'sui')];
     if (staked > 0n) holdings.push(h('SUI (staked)', units(staked, 9), 'sui'));
+    if (rewards > 0n) holdings.push(h('SUI (rewards)', units(rewards, 9), 'sui'));
     let t = { holdings: [], others: rest.length, partial: rest.length ? 'tokens not valued' : null };
     if (rest.length) try { t = await TOKENS.other('sui', rest, ['0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC']); } catch (e) { /* counted as others */ }
     const more = a.objects && a.objects.pageInfo && a.objects.pageInfo.hasNextPage ? 'first 50 stakes counted' : null;
-    return { holdings: holdings.concat(t.holdings), others: t.others, partial: [t.partial, more].filter(Boolean).join('; ') || null };
+    return { holdings: holdings.concat(t.holdings), others: t.others, partial: [t.partial, more, rewards === null && 'staking rewards not checked'].filter(Boolean).join('; ') || null };
+  }
+  // Delegated APT: the indexer names the delegation pools this account has shares in, and
+  // each pool's get_stake gives what is the account's now (active, unlocking, withdrawable),
+  // rewards included.
+  async function aptStaked(addr) {
+    const j = await fetchJSON('https://api.mainnet.aptoslabs.com/v1/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      query: 'query($a: String!) { current_delegator_balances(distinct_on: pool_address, where: { delegator_address: { _eq: $a }, shares: { _gt: "0" } }, limit: 50) { pool_address } }', variables: { a: addr } }) });
+    const rows = !j.errors && j.data && j.data.current_delegator_balances;
+    if (!Array.isArray(rows)) throw new Error('unexpected answer');
+    const stakes = await Promise.all(rows.map((r) => firstOk(APT_APIS, (base) => fetchJSON(base + '/view', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ function: '0x1::delegation_pool::get_stake', type_arguments: [], arguments: [r.pool_address, addr] }) }))));
+    return stakes.reduce((sum, s) => { if (!Array.isArray(s)) throw new Error('unexpected answer'); return s.reduce((t, x) => t + BigInt(x), sum); }, 0n);
   }
   // APT from the node; every other fungible asset from Aptos Labs' indexer (no key), valued
   // like any other token
   async function checkApt(addr) {
-    const [octas, idx] = await Promise.all([firstOk(APT_APIS, (base) => aptosBalance(base, addr)),
+    const [octas, idx, staked] = await Promise.all([firstOk(APT_APIS, (base) => aptosBalance(base, addr)), 
       fetchJSON('https://api.mainnet.aptoslabs.com/v1/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-        query: 'query($a: String!) { current_fungible_asset_balances(where: { owner_address: { _eq: $a }, amount: { _gt: "0" } }, limit: 100) { asset_type amount } }', variables: { a: addr } }) }).catch(() => null)]);
+        query: 'query($a: String!) { current_fungible_asset_balances(where: { owner_address: { _eq: $a }, amount: { _gt: "0" } }, limit: 100) { asset_type amount } }', variables: { a: addr } }) }).catch(() => null),
+      aptStaked(addr).catch(() => null)]);
     const rows = (idx && !idx.errors && idx.data && idx.data.current_fungible_asset_balances) || null;
     // amounts come as JSON numbers: past 2^53 they are approximate, which is fine for a value
     const rest = (rows || []).filter((b) => !/^0x1::aptos_coin::AptosCoin$|^0x0*a$/.test(b.asset_type) && Number(b.amount) > 0)
       .map((b) => ({ addr: b.asset_type, raw: /^\d+$/.test(String(b.amount)) ? String(b.amount) : BigInt(Math.trunc(Number(b.amount))).toString() }));
     let t = { holdings: [], others: rest.length, partial: !rows ? 'tokens not checked' : rows.length >= 100 ? 'first 100 tokens checked' : null };
     if (rest.length) try { const cut = t.partial; t = await TOKENS.other('aptos', rest, ['0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b']); t.partial = [cut, t.partial].filter(Boolean).join('; ') || null; } catch (e) { t.partial = 'tokens not valued'; }
-    return { holdings: [h('APT', units(octas, 8), 'aptos')].concat(t.holdings), others: t.others, partial: t.partial };
+    const holdings = [h('APT', units(octas, 8), 'aptos')];
+    if (staked > 0n) holdings.push(h('APT (staked)', units(staked, 8), 'aptos'));
+    return { holdings: holdings.concat(t.holdings), others: t.others, partial: [t.partial, staked === null && 'staking not checked'].filter(Boolean).join('; ') || null };
   }
 
   // CashAddr (BCH and eCash address format) for the legacy Bitcoin address's hash.
@@ -679,20 +759,24 @@
   // a few calls a minute). Results are cached in this browser for five minutes so a quick
   // rescan does not ask again. Only coin ids are sent, never addresses.
   const PRICE_CACHE = 'seedcheckr-prices', PRICE_TTL = 5 * 60 * 1000;
+  const priceMemo = {};
   async function fetchPrices(ids) {
     const out = {};
     let cache = {};
     try { cache = JSON.parse(localStorage.getItem(PRICE_CACHE) || '{}'); } catch (e) { cache = {}; }
     const now = Date.now();
     for (const id of ids) if (cache[id] && now - cache[id].t < PRICE_TTL) out[id] = cache[id].p;
+    for (const id of ids) if (!(id in out) && priceMemo[id] && now - priceMemo[id].t < PRICE_TTL) out[id] = priceMemo[id].p;   // private mode: no localStorage
     const cached = new Set(Object.keys(out));
     let missing = [...ids].filter((id) => !(id in out));
-    for (let i = 0; i < missing.length; i += 60) {
+    const chunks = [];
+    for (let i = 0; i < missing.length; i += 60) chunks.push(missing.slice(i, i + 60));
+    await Promise.all(chunks.map(async (chunk) => {
       try {
-        const j = await fetchJSON('https://coins.llama.fi/prices/current/' + missing.slice(i, i + 60).map((id) => 'coingecko:' + encodeURIComponent(id)).join(','), undefined, 10000);
+        const j = await fetchJSON('https://coins.llama.fi/prices/current/' + chunk.map((id) => 'coingecko:' + encodeURIComponent(id)).join(','), undefined, 10000);
         for (const [k, v] of Object.entries(j.coins || {})) if (v && typeof v.price === 'number') out[k.replace(/^coingecko:/, '')] = v.price;
       } catch (e) { /* fall through to CoinGecko */ }
-    }
+    }));
     missing = missing.filter((id) => !(id in out));
     if (missing.length) {
       try {
@@ -700,6 +784,7 @@
         for (const [k, v] of Object.entries(j)) if (v && typeof v.usd === 'number') out[k] = v.usd;
       } catch (e) { /* amounts still show, without dollars */ }
     }
+    for (const [id, p] of Object.entries(out)) if (!cached.has(id)) priceMemo[id] = { p, t: now };
     try {
       for (const [id, p] of Object.entries(out)) if (!cached.has(id)) cache[id] = { p, t: now };
       localStorage.setItem(PRICE_CACHE, JSON.stringify(cache));
@@ -784,7 +869,7 @@
     });
   }
   function describe(r) {
-    if (!r.ok) return r.check.unavailable ? 'not checkable' : 'no answer';
+    if (!r.ok) return r.check.skipped ? 'skipped by you' : r.check.unavailable ? 'not checkable' : 'no answer';
     if (cellState(r) === 'part') return 'partly answered';
     const hit = r.holdings.filter((x) => x.amount > 0);
     if (!hit.length) return 'nothing';
@@ -839,6 +924,7 @@
     const checks = buildChecks(addr);
     $('#stage-title').textContent = 'Checking ' + checks.length + ' networks';
     const progress = liveProgress(checks, { meter: $('#meter'), fill: $('#meter-fill'), pct: $('#pct'), text: $('#progress-text'), noun: 'networks' });
+    fetchPricesEarly();
     state.results = await runChecks(checks, progress);
     $('#meter').classList.add('done');
     $('#progress-text').textContent = 'All ' + checks.length + ' networks answered. Adding it up';
@@ -885,6 +971,7 @@
     const idx = state.results.map((r, i) => (retryable(r) ? i : -1)).filter((i) => i >= 0);
     if (!idx.length) return;
     state.busy = true;
+    silent.clear();   // servers taken as down get another chance
     const btn = $('#retry');
     btn.disabled = true;
     const cells = renderBoard(state.results);
@@ -908,6 +995,18 @@
     const ids = new Set(Object.values(HL_COINS).filter(Boolean));
     if (window.SeedExtra) for (const id of window.SeedExtra.PRICE_IDS) ids.add(id);
     return ids;
+  }
+  // The coins every scan asks about anyway (each network's own coin and listed stablecoins),
+  // fetched while the networks are still answering instead of after; the verdict then only
+  // asks for what is left (token prices come with the tokens).
+  let pricesEarly = null;
+  function fetchPricesEarly() {
+    const ids = allPriceIds();
+    for (const c of EVM) { ids.add(c.price); for (const t of c.tokens) ids.add(t.price); }
+    for (const c of COSMOS.concat([INJ])) { ids.add(c.price); for (const st of Object.values(c.stables || {})) ids.add(st[2]); }
+    for (const id of ['bitcoin', 'bitcoin-cash', 'bitcoin-cash-sv', 'ecash', 'solana', 'ethereum', 'tron', 'ripple', 'xahau', 'sui', 'aptos', 'movement', 'litecoin', 'dogecoin']) ids.add(id);
+    ids.delete(undefined); ids.delete(null);
+    pricesEarly = fetchPrices(ids).catch(() => null);
   }
 
   async function runChecks(checks, onProgress) {
@@ -933,6 +1032,7 @@
   async function showVerdict(results) {
     const priceIds = allPriceIds();
     for (const r of results) for (const x of r.holdings) if (x.price) priceIds.add(x.price);
+    if (pricesEarly) await pricesEarly;
     const prices = await fetchPrices(priceIds);
     const total = results.length;
     let usd = 0, chainsWithCoins = 0, answered = 0, otherTokens = 0, priced = true;
@@ -950,8 +1050,9 @@
       }
       if (any) chainsWithCoins++;
     }
-    const unavailable = results.filter((r) => !r.ok && r.check.unavailable).length;
-    const failed = total - answered - unavailable;
+    const skipped = results.filter((r) => !r.ok && r.check.skipped).length;
+    const unavailable = results.filter((r) => !r.ok && r.check.unavailable).length - skipped;
+    const failed = total - answered - unavailable - skipped;
     const partly = results.filter((r) => r.ok && r.partial && !r.holdings.some((x) => x.amount > 0)).length;   // answered, but not every token was read
     const verdictEl = $('#verdict');
     const textEl = $('#verdict-text');
@@ -975,6 +1076,7 @@
       const gaps = [];
       if (failed) gaps.push(plural(failed, 'network', 'networks') + ' did not answer');
       if (partly) gaps.push(plural(partly, 'network', 'networks') + ' only partly answered');
+      if (skipped) gaps.push(plural(skipped, 'further account was', 'further accounts were') + ' skipped by you');
       fineEl.textContent = (otherTokens ? plural(otherTokens, 'airdropped token', 'airdropped tokens') + ' found, which does not count. ' : '') + (gaps.length ? gaps.join(' and ') + ', so there is still a sliver of hope.' : '');
     }
     renderCaseFile(results, failed);
@@ -982,7 +1084,7 @@
     const legend = $('#legend');
     legend.textContent = '';
     for (const [cls, n, one, many] of [['l-hit', chainsWithCoins, 'network with coins', 'networks with coins'], ['l-empty', answered - chainsWithCoins - partly, 'empty', 'empty'],
-      ['l-part', partly, 'partly answered', 'partly answered'], ['l-fail', failed, 'no answer', 'no answer'], ['l-skip', unavailable, 'not checkable', 'not checkable']]) {
+      ['l-part', partly, 'partly answered', 'partly answered'], ['l-fail', failed, 'no answer', 'no answer'], ['l-skip', unavailable, 'not checkable', 'not checkable'], ['l-skip', skipped, 'skipped by you', 'skipped by you']]) {
       if (!n && cls !== 'l-hit') continue;
       const li = document.createElement('li'); li.className = cls;
       const b = document.createElement('b'); b.textContent = String(n);
@@ -1005,6 +1107,7 @@
   const extraHelpers = {
     fetchJSON, rpc, firstOk, units, h, checkEvm, checkEvmAccount, checkMempoolStyle, checkBtc, checkLtc, checkBch, checkBsv, checkXecHash, checkCosmos, checkSol,
     fetchText: (url) => fetchOnce(url, undefined, 15000, 'text'),
+    otherTokens: (slug, list, known) => TOKENS.other(slug, list, known),
     evm: (key) => EVM.find((c) => c.key === key),
   };
   let stopCamera = null;
@@ -1014,7 +1117,7 @@
     bar.textContent = '';
     for (let i = 0; i < total; i++) { const s = document.createElement('span'); if (i < have) s.className = 'got'; bar.appendChild(s); }
   }
-  function closeCamera() { if (stopCamera) { stopCamera(); stopCamera = null; } $('#more-cam').hidden = true; $('#more-start').hidden = state.extraDone; }
+  function closeCamera() { if (stopCamera) { stopCamera(); stopCamera = null; } $('#more-cam').hidden = true; $('#more-start').hidden = $('#more-accounts-opt').hidden = state.extraDone; }
   // The moving QR must come from the same seed as the Portfolio QR: the segwit account key
   // it carries (0x70) derives the first segwit address, which the Portfolio QR also holds.
   function sameSeed(records) {
@@ -1033,7 +1136,10 @@
     while (state.busy) await new Promise((r) => setTimeout(r, 100));   // a retry is still running
     state.busy = true;
     $('#retry').hidden = true;
-    const checks = window.SeedExtra.build(records, extraHelpers);
+    // further accounts the visitor chose not to check: shown as rows, never asked
+    const skip = !$('#more-accounts').checked;
+    const checks = window.SeedExtra.build(records, extraHelpers).map((c) => (skip && c.account ? Object.assign(c, { unavailable: 'you chose to check only the main accounts', skipped: true }) : c));
+    $('#more-accounts-opt').hidden = true;
     $('#more-text').textContent = 'Checking ' + checks.length + ' more networks';
     $('#more-meter').hidden = false;
     const more = await runChecks(checks, liveProgress(checks, { meter: $('#more-meter'), fill: $('#more-fill'), text: $('#more-text'), noun: 'more networks' }));
@@ -1042,7 +1148,7 @@
     state.results = supersede(state.results.concat(more), more);
     await showVerdict(state.results);
     state.busy = false;
-    $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR, including whole Bitcoin and Litecoin wallets and Ethereum accounts 2 to 5 (MetaMask and Ledger Live). The verdict above now covers ' + state.results.length + '.';
+    $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR, including whole Bitcoin and Litecoin wallets' + (skip ? '' : ' and further accounts of Ethereum, Solana and Bitcoin') + '. The verdict above now covers ' + state.results.length + '.';
     $('#verdict').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
   }
   function startScan() {
@@ -1051,6 +1157,7 @@
     frameBar(0, 0);
     $('#more-cam').hidden = false;
     $('#more-start').hidden = true;
+    $('#more-accounts-opt').hidden = true;
     moreStatus('Starting the camera…');
     const session = window.SeedScan.startCamera($('#more-video'), (text) => {
       if (stopCamera !== session || state.extraDone) return;
@@ -1068,7 +1175,7 @@
       .catch((e) => {
         if (stopCamera !== session) return;   // an older, cancelled session: leave the current one alone
         if (String(e && e.message || e) !== 'stopped') moreStatus('Camera not available: ' + (e && e.message || e));
-        stopCamera = null; $('#more-cam').hidden = true; $('#more-start').hidden = state.extraDone;
+        stopCamera = null; $('#more-cam').hidden = true; $('#more-start').hidden = $('#more-accounts-opt').hidden = state.extraDone;
       });
   }
 
@@ -1090,7 +1197,7 @@
       const addrShort = document.createElement('span'); addrShort.className = 'addr short'; addrShort.textContent = shortAddr(r.check.addr);
       const addrFull = document.createElement('span'); addrFull.className = 'addr full'; addrFull.textContent = r.check.addr;
       const amount = document.createElement('span'); amount.className = 'amount';
-      if (!r.ok) { amount.classList.add('failed'); if (r.check.unavailable) amount.classList.add('skip'); amount.textContent = r.check.unavailable ? 'not checkable' : 'did not answer'; }
+      if (!r.ok) { amount.classList.add('failed'); if (r.check.unavailable) amount.classList.add('skip'); amount.textContent = r.check.skipped ? 'not checked (skipped by you)' : r.check.unavailable ? 'not checkable' : 'did not answer'; }
       else if (!nonzero.length) { amount.classList.add('none'); amount.textContent = 'nothing'; }
       else {
         let usd = 0, anyUsd = false;

@@ -16,6 +16,7 @@ const appSrc = fs.readFileSync(path.join(REPO, 'docs/app.js'), 'utf8');
 // ---- payload ----
 let arg = process.argv[2] || 'demo';
 const MORE = process.argv.includes('--more');
+const SKIP_ACCOUNTS = process.argv.includes('--skip-accounts');   // untick "Also check accounts 2 to 5"
 let FRAMES = [];
 let payload;
 if (arg === 'demo') {
@@ -40,6 +41,7 @@ if (arg === 'demo') {
 function el(tag) {
   const e = {
     tag, children: [], attrs: {}, style: {}, classes: new Set(), hidden: true /* sections start hidden in the HTML */, innerHTML: '', _text: '',
+    checked: !(tag === '#more-accounts' && SKIP_ACCOUNTS),   // the one checkbox starts ticked
     get textContent() { return this._text; }, set textContent(v) { this._text = v; this.children = []; },
     setAttribute(k, v) { e.attrs[k] = v; },
     appendChild(c) { e.children.push(c); return c; },
@@ -67,11 +69,12 @@ globalThis.SeedTokens = require(path.join(REPO, 'docs/tokens.js'));
 globalThis.SeedScan.startCamera = (video, onText) => { const stop = () => {}; stop.ready = Promise.resolve('test'); setTimeout(() => { FRAMES.forEach((f) => onText(f)); FRAMES.forEach((f) => onText(f)); }, 50); return stop; };
 
 // ---- fetch wrapper: what a browser would see ----
+const START = Date.now();
 const realFetch = globalThis.fetch;
 const log = [];
 globalThis.fetch = async (url, opts = {}) => {
   const method = (opts.method || 'GET').toUpperCase();
-  const entry = { url: String(url), method, status: null, acao: null, preflight: null, err: null, ms: 0 };
+  const entry = { url: String(url), method, status: null, acao: null, preflight: null, err: null, ms: 0, at: Date.now() - START };
   log.push(entry);
   const t0 = Date.now();
   const hasJson = Object.keys(opts.headers || {}).some((k) => k.toLowerCase() === 'content-type');
@@ -156,4 +159,8 @@ vm.runInThisContext(appSrc, { filename: 'app.js' });
     const e = s.e;
     console.log((s.bad ? '!! ' : 'ok ') + host.padEnd(40) + 'x' + String(s.n).padEnd(3) + e.method + ' ' + (e.status ?? e.err) + ' acao=' + e.acao + (e.preflight ? ' preflight=' + JSON.stringify(e.preflight) : '') + ' ' + e.ms + 'ms');
   }
+  // what holds the verdict up: the slowest single requests
+  if (process.env.DUMP) require('fs').writeFileSync(process.env.DUMP, JSON.stringify(log));   // every request, for a closer look
+  console.log('=== slowest requests ===');
+  for (const e of log.slice().sort((a, b) => b.ms - a.ms).slice(0, 15)) console.log(String(e.ms).padStart(6) + 'ms ' + (e.status ?? e.err) + ' ' + e.url.slice(0, 140));
 })();

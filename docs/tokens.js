@@ -170,14 +170,37 @@
     avax: [['WAVAX', '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7', 18], ['USDC', '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', 6], ['USDt', '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', 6], ['WETH.e', '0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB', 18], ['BTC.b', '0x152b9d0FdC40C096757F570A51E494bd4b943E50', 8], ['DAI.e', '0xd586E7F844cEa2F87f50152665BCbc2C279D8d70', 18], ['USDC.e', '0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664', 6], ['USDT.e', '0xc7198437980c041c805A1EDcbA50c1Ce5db95118', 6], ['LINK.e', '0x5947BB275c521040051D82396192181b413227A3', 18], ['JOE', '0x6e84a6216eA6dACC71eE8E6b0a5B7322EEbC0fDd', 18], ['sAVAX', '0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE', 18], ['AAVE.e', '0x63a72806098Bd3D9520cC43356dD78afe5D386D9', 18], ['QI', '0x8729438EB15e2C8B576fCc6AeCdA6A148776C0F5', 18], ['GMX', '0x62edc0692BD897D2295872a9FFCac5425011c661', 18], ['EURC', '0xC891EB4cbdEFf6e073e859e987815Ed1505c2ACD', 6], ['COQ', '0x420FcA0121DC28039145009570975747295f2329', 18], ['PNG', '0x60781C2586D68229fde47564546784ab3fACA982', 18]],
     // smaller networks (Fantom: when its API is down; the rest have no token-list API): their few tokens DefiLlama prices
     ftm: [['WFTM', '0x21be370d5312f44cb42ce377bc9b8a0cef1a4c83', 18], ['axlUSDC', '0x1b6382dbdea11d97f24495c9a90b7c88469134a4', 6], ['BOO', '0x841fad6eae12c286d1fd18d1d525dffa75c7effe', 18]],
-    iotx: [['WIOTX', '0xa00744882684c3e4747faefd68d283ea44099d03', 18], ['USDT-matic', '0x3cdb7c48e70b854ed2fa392e21687501d84b3afc', 6]],
-    vic: [['C98', '0x0fd0288aaae91eaf935e2ec14b23486f86516c8c', 18]],
-    glmr: [['xcDOT', '0xFfFFfFff1FcaCBd218EDc0EbA20Fc2308C778080', 10], ['WELL', '0x511aB53F793683763E5a8829738301368a2411E3', 18]],
-    movr: [['WMOVR', '0x98878B06940aE243284CA214f92Bb71a2b032B8A', 18], ['USDC', '0xE3F5a90F9cb311505cd691a46596599aA1A0AD7D', 6]],
+    iotx: [['WIOTX', '0xa00744882684c3e4747faefd68d283ea44099d03', 18], ['USDT-matic', '0x3cdb7c48e70b854ed2fa392e21687501d84b3afc', 6], ['WMATIC', '0x8e66c0d6b70c0b23d39f4b21a1eac52bba8ed89a', 18]],
+    vic: [['C98', '0x0fd0288aaae91eaf935e2ec14b23486f86516c8c', 18], ['WETH', '0x2eaa73bd0db20c64f53febea7b5f5e5bccc7fb8b', 18]],
+    glmr: [['xcDOT', '0xFfFFfFff1FcaCBd218EDc0EbA20Fc2308C778080', 10], ['WELL', '0x511aB53F793683763E5a8829738301368a2411E3', 18], ['LINK', '0x012414a392f9fa442a3109f1320c439c45518ac3', 18], ['FRAX', '0x322e86852e492a7ee17f28a78c663da38fb33bfb', 18], ['frxETH', '0x82bbd1b6f6de2b7bb63d3e1546e6b1553508be99', 18], ['AXL', '0x467719ad09025fcc6cf6f8311755809d45a5e5f3', 6], ['BRLA', '0xfeb25f3fddad13f82c4d6dbc1481516f62236429', 18]],
+    movr: [['WMOVR', '0x98878B06940aE243284CA214f92Bb71a2b032B8A', 18], ['USDC', '0xE3F5a90F9cb311505cd691a46596599aA1A0AD7D', 6], ['LINK', '0x8b12ac23bfe11cab03a634c1f117d64a7f2cfd3e', 18], ['FRAX', '0x1a93b23281cc1cde4c4741353f3064709a16197d', 18], ['FXS', '0x6f1d1ee50846fcbc3de91723e61cb68cfa6d0e98', 18]],
     zkevm: [['USDC', '0x37eAA0eF3549a5Bb7D431be78a3D99BD360d19e5', 6], ['USDT', '0x1E4a5963aBFD975d8c9021ce480b42188849D41d', 6], ['POL', '0x22B21BedDef74FE62F031D2c5c8F7a9F8a4b304D', 18]],
+    // networks whose only token list is Rabby's (or an explorer with no backup): their biggest tokens
+    // by market cap (CoinGecko), each checked on-chain and priced by DefiLlama, read when the list fails
+    og: [['WETH', '0x564770837ef8bbf077cfe54e5f6106538c815b22', 18]],
+    xlayer: [['USDC', '0xb6ceceab302e2e4948951ee7843fc24e92933061', 6], ['LINK', '0x8af9711b44695a5a081f25ab9903ddb73acf8fa9', 18], ['USDe', '0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34', 18], ['USDT0', '0x779ded0c9e1022225f8e0630b35a9b54be713736', 6], ['USDG', '0x4ae46a509f6b1d9056937ba4500cb143933d2dc8', 6], ['sUSDe', '0x211cc4dd073734da055fbf44a2b4667d5e5fe5d2', 18], ['frxUSD', '0x80eede496655fb9047dd39d9f418d5483ed600df', 18], ['xBTC', '0xb7c00000bcdeef966b20b3d884b98e64d2b06b4f', 8]],
+    nrg: [['LINK', '0x68ca48ca2626c415a89756471d4ade2cc9034008', 18], ['UNI', '0x665b3a802979ec24e076c80025bff33c18eb6007', 18], ['QNT', '0x462b35452e552a66b519ecf70aedb1835d434965', 18], ['AAVE', '0xa7f2f790355e0c32cab03f92f6eb7f488e6f049a', 18], ['eTRX', '0xdc5f62055a2911f85cf16df9f7662403387c8d46', 18], ['NEXO', '0x04640dc771edd73cbeb934fb5461674830baea11', 18], ['CRV', '0xd3319eaf3c4743ac75aace77befcfa445ed6e69e', 18], ['BTT', '0xf1bdcf2d4163adf9554111439dabdd6f18ff9ba7', 18]],
+    cfx: [['USDT0', '0xaf37e8b6c9ed7f6318979f56fc287d76c30847ff', 6], ['XAUt0', '0xacc6efbe554397b741baadecf0120780b858f5f4', 6]],
+    kavaevm: [['USDT', '0x919c1c267bc06a7039e03fcc2ef738525769109c', 6], ['USDe', '0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34', 18], ['ENA', '0x58538e6a46e07434d7e7375bc268d3cb839c0133', 18], ['sUSDe', '0x211cc4dd073734da055fbf44a2b4667d5e5fe5d2', 18], ['ATOM', '0x15932e26f5bd4923d46a2b205191c4b5d5f43fe3', 6]],
+    core: [['LINK', '0x3902228d6a3d2dc44731fd9d45fee6a61c722d0b', 18], ['AUSD', '0x00000000efe302beaa2b3e6e1b18d08d69a9012a', 6], ['WCORE', '0x191e94fa59739e188dce837f7f6978d84727ad01', 18]],
+    fraxtal: [['LINK', '0xd6a6ba37faac229b9665e86739ca501401f5a940', 18], ['USDe', '0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34', 18], ['ENA', '0x58538e6a46e07434d7e7375bc268d3cb839c0133', 18], ['sUSDe', '0x211cc4dd073734da055fbf44a2b4667d5e5fe5d2', 18], ['crvUSD', '0xb102f7efa0d5de071a8d37b3548e1c7cb148caf3', 18], ['AUSD', '0x00000000efe302beaa2b3e6e1b18d08d69a9012a', 6], ['ezETH', '0x2416092f143378750bb29b79ed961ab195cceea5', 18], ['FRAX', '0xfc00000000000000000000000000000000000001', 18]],
+    katana: [['LINK', '0xc2c447b04e0ed3476ddbdae8e9e39be7159d27b6', 18], ['MORPHO', '0x1e5efca3d0db2c6d5c67a4491845c43253eb9e4e', 18], ['JitoSOL', '0x6c16e26013f2431e8b2e1ba7067ecccad0db6c52', 18], ['LBTC', '0xecac9c5f704e954931349da37f60e39f515c11c1', 8], ['AUSD', '0x00000000efe302beaa2b3e6e1b18d08d69a9012a', 6], ['frxUSD', '0x80eede496655fb9047dd39d9f418d5483ed600df', 18], ['SUSHI', '0x17bff452dae47e07cea877ff0e1aba17eb62b0ab', 18], ['sfrxUSD', '0x5bff88ca1442c2496f7e475e9e7786383bc070c0', 18]],
+    kaia: [['USD₮', '0xd077a400968890eacc75cdc901f0356c943e4fdb', 6], ['LINK', '0x7311ded199cc28d80e58e81e8589aa160199fcd2', 18], ['JPYC', '0xe7c3d8c9a439fede00d2600032d5db0be71c3c29', 18], ['BORA', '0x02cbe46fb8a1f579254a9b485788f2d86cad51aa', 18], ['PYBOBO', '0x2b94e669139b1b546a0c28c3b78fd7a35d5a5f94', 18], ['USDC.e', '0xe2053bcf56d2030d2470fb454574237cf9ee3d4b', 6], ['WETH', '0x09d428a066e77806f9de48fe3a57e837ccd0912f', 18], ['MBX', '0xd068c52d81f4409b9502da926ace3301cc41f623', 18]],
+    xdc: [['USDC', '0xfa2958cb79b0491cc627c1557f441ef849ca8eb1', 6], ['LINK', '0xe27dd9bf01b55ce6803c0d81386a04212c718b95', 18], ['USDf', '0x8210c0634ab8f273806e4b7866e9db353773c44b', 18], ['GAMA', '0x3a170c7c987f55c84f28733bfa27962d8cdd5d3b', 18], ['USDC.e', '0xcc0587aebda397146cc828b445db130a94486e74', 6], ['WETH', '0xa7348290de5cf01772479c48d50dec791c3fc212', 18]],
+    bitlayer: [['LINK', '0x56b275c0ec034a229a1ded8db17089544bc276d9', 18], ['BTR', '0x0e4cf4affdb72b39ea91fa726d291781cbd020bf', 18]],
+    b2: [['LINK', '0x709229d9587886a1edfee6b5ce636e1d70d1ce39', 18]],
+    bob: [['WBTC', '0x0555e30da8f98308edb960aa94c0db47230d2b9c', 8], ['LINK', '0x5ab885cda7216b163fb6f813dec1e1532516c833', 18], ['TBTC', '0xbba2ef945d523c4e2608c9e1214c2cc64d4fc2e2', 18], ['EUL', '0xde1763afa5eb658cffffd16835afeb47e7ac0b8d', 18], ['BOB', '0xb0bd54846a92b214c04a63b26ad7dc5e19a60808', 18]],
+    okt: [['OKB', '0xdf54b6c6195ea4d948d03bfd818d365cf175cfc2', 18], ['RACA', '0x12bb890508c125661e03b09ec06e404bc9289040', 18]],
+    taiko: [['LINK', '0x917a3964c37993e99a47c779beb5db1e9d13804d', 18], ['crvUSD', '0xc8f4518ed4bab9a972808a493107926ce8237068', 18], ['TAIKO', '0xa9d23408b9ba935c230493c40c73824df71a0975', 18], ['USDC.e', '0x19e26b0638bf63aa9fa4d14c6baf8d52ebe86c5c', 6]],
+    wemix: [['LINK', '0x80f1fcdc96b55e459bf52b998abbe2c364935d69', 18]],
+    zircuit: [['USDe', '0x5d3a1ff2b6bab83b63cd9ad0787074081a52ef34', 18], ['ENA', '0x813635891aa06bd55036bbd8f7d1a34ab3de9a0f', 18], ['sUSDe', '0x211cc4dd073734da055fbf44a2b4667d5e5fe5d2', 18]],
+    zora: [['LINK', '0x3662b6f73c5560229d1a98af6e59e6649d568374', 18]],
+    citrea: [['CTR', '0x547afd93b9c47d552059feb556909e017f8a9b25', 18]],
   };
-  // stablecoins of the non-EVM networks, trusted as they are (each checked on DefiLlama)
+  // stablecoins of the non-EVM networks, trusted as they are (each checked on DefiLlama); on NEAR
+  // also wrapped NEAR and the two big liquid-staking tokens, whose DEX pools are thin next to them
   const STABLE = {
+    near: ['usdt.tether-token.near', '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', 'wrap.near', 'meta-pool.near', 'linear-protocol.near'],
     tron: ['TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn', 'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4'],
     sui: ['0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC', '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT',
       '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN', '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN'],
@@ -215,7 +238,7 @@
     let rabbyDown = null;
     const rabby = (path) => rabbyQueue(() => {
       if (rabbyDown) throw rabbyDown;
-      return D.fetchJSON(RABBY_API + path).catch((e) => { rabbyDown = e; throw e; });
+      return D.fetchJSON(RABBY_API + path, { retry: false }).catch((e) => { rabbyDown = e; throw e; });   // its 429 lasts ~15 minutes
     });
     // Rabby networks where an address holds anything: one call instead of one per network
     // (null when Rabby does not answer: then each network is asked directly)

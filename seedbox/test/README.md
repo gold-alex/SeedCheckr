@@ -34,6 +34,7 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     node site_live.js demo      # a famous wallet, expects "are in possession"
     node site_live.js random    # a fresh mnemonic, expects "not in possession"
     node site_live.js "mnemonic:abandon ... about" --more   # both QRs; a stand-in camera feeds the device's frames
+    node site_live.js "mnemonic:abandon ... about" --more --skip-accounts   # the same, with "accounts 2 to 5" unticked
     # site_live.js ends with a health section (every network that did not answer or only partly answered)
     # and exits 1 on a wrong verdict, a timeout, or more than MAX_FAIL (default 2) networks not answering
 

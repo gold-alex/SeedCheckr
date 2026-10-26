@@ -317,7 +317,7 @@
   const XPUB = 0x0488b21e, YPUB = 0x049d7cb2, ZPUB = 0x04b24746;
 
   // ---------------- per-type checks ----------------
-  // build(records, K) -> list of { name, addr, explorer, run, unavailable? } using the fetch
+  // build(records, K) -> list of { name, addr, explorer, run, unavailable?, account? (a further account: 2-5) } using the fetch
   // helpers app.js passes in K (fetchJSON, rpc, firstOk, units, h, checkEvm, evm(key), ...).
   const cz = (name, rest, denom, dec, symbol, price, explorer, extra) => Object.assign({ name, rest, denom, dec, symbol, price, explorer }, extra || {});
   const COSMOS_BY_TYPE = {
@@ -502,7 +502,26 @@
               if (j.error) { if ((j.error.cause && j.error.cause.name) === 'UNKNOWN_ACCOUNT') return { amount: '0' }; throw new Error((j.error.cause && j.error.cause.name) || j.error.message); }   // UNKNOWN_ACCOUNT: implicit account never funded
               return j.result;
             });
-            return one(h('NEAR', units(BigInt(r.amount), 24), 'near'));
+            // staking pools and tokens: FastNEAR's index lists the pools this account ever staked
+            // with and its token balances; each pool says what it holds for the account now
+            const f = await fetchJSON('https://api.fastnear.com/v1/account/' + a + '/full').catch(() => null);
+            const hs = [h('NEAR', units(BigInt(r.amount), 24), 'near')], gaps = [];
+            if (!f) gaps.push('staking and tokens not checked');
+            const pools = (f && f.pools || []).slice(0, 20);
+            const view = (pool) => firstOk(['https://rpc.fastnear.com', 'https://rpc.mainnet.near.org'], async (u) => {
+              const j = await fetchJSON(u, post({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'call_function', finality: 'final', account_id: pool, method_name: 'get_account_total_balance', args_base64: btoa(JSON.stringify({ account_id: a })) } }));
+              if (j.error || !j.result || !Array.isArray(j.result.result)) throw new Error('unexpected answer');
+              return BigInt(JSON.parse(String.fromCharCode(...j.result.result)));
+            });
+            const staked = await Promise.allSettled(pools.map((p) => view(p.pool_id)));
+            let n = 0n;
+            for (const x of staked) if (x.status === 'fulfilled') n += x.value;
+            if (staked.some((x) => x.status !== 'fulfilled')) gaps.push('some staking pools did not answer');
+            if (n > 0n) hs.push(h('NEAR (staked)', units(n, 24), 'near'));
+            const rest = (f && f.tokens || []).filter((t) => /^\d+$/.test(String(t.balance)) && BigInt(t.balance) > 0n).map((t) => ({ addr: t.contract_id, raw: t.balance }));
+            let t = { holdings: [], others: rest.length, partial: null };
+            if (rest.length) try { t = await K.otherTokens('near', rest.slice(0, 400)); } catch (e) { gaps.push('tokens not valued'); }
+            return { holdings: hs.concat(t.holdings), others: t.others, partial: [t.partial].concat(gaps).filter(Boolean).join('; ') || null };
           }); break; }
         case 0x55: { const a = addr.algorand(b);
           add('Algorand', a, 'https://allo.info/account/', async () => {
@@ -563,7 +582,7 @@
           if (b.length !== 138) break;
           for (let n = 1; n <= 2; n++) {
             const k = b.slice(69 * (n - 1), 69 * n), shown = addr.xpub(k, ZPUB, n), query = addr.xpub(k, XPUB, n);
-            add('Bitcoin account ' + (n + 1) + ' (segwit, every address)', shown, 'https://blockchair.com/bitcoin/xpub/', () => haskoin(query, 'btc', 'segwit', 'BTC', 'bitcoin'));
+            add('Bitcoin account ' + (n + 1) + ' (segwit, every address)', shown, 'https://blockchair.com/bitcoin/xpub/', () => haskoin(query, 'btc', 'segwit', 'BTC', 'bitcoin'), { account: true });
           }
           break;
         }
@@ -572,7 +591,7 @@
           if (b.length !== 128) break;
           for (let n = 1; n <= 4; n++) {
             const a = base58(b.slice(32 * (n - 1), 32 * n));
-            add('Solana account ' + (n + 1) + ' (Phantom, Solflare)', a, 'https://solscan.io/account/', () => K.checkSol(a));
+            add('Solana account ' + (n + 1) + ' (Phantom, Solflare)', a, 'https://solscan.io/account/', () => K.checkSol(a), { account: true });
           }
           break;
         }
@@ -581,8 +600,8 @@
           if (b.length !== 69) break;
           const [kind, name, replaces, symbol, price, apis, explorer] = {
             0x74: ['btc-tr', 'Bitcoin taproot wallet (every address)', 'Bitcoin taproot (bc1p)', 'BTC', 'bitcoin', ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'], 'https://mempool.space/address/'],
-            0x75: ['ltc-wpkh', 'Litecoin wallet (segwit, every address)', 'Litecoin', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/'], 'https://litecoinspace.org/address/'],
-            0x76: ['ltc-pkh', 'Litecoin legacy wallet (every address)', 'Litecoin legacy (L...)', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/'], 'https://litecoinspace.org/address/'],
+            0x75: ['ltc-wpkh', 'Litecoin wallet (segwit, every address)', 'Litecoin', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/', 'bitcore'], 'https://litecoinspace.org/address/'],
+            0x76: ['ltc-pkh', 'Litecoin legacy wallet (every address)', 'Litecoin legacy (L...)', 'LTC', 'litecoin', ['https://litecoinspace.org/api/address/', 'bitcore'], 'https://litecoinspace.org/address/'],
             0x78: ['doge-pkh', 'Dogecoin wallet (every address)', 'Dogecoin', 'DOGE', 'dogecoin', ['bitcore', 'blockcypher'], 'https://dogechain.info/address/'],
             0x79: ['dash-pkh', 'Dash wallet (every address)', 'Dash', 'DASH', 'dash', ['insight', 'blockcypher'], 'https://insight.dash.org/insight/address/'],
           }[type];
@@ -611,7 +630,7 @@
           if (b.length !== 69) break;
           for (let n = 1; n <= 4; n++) {
             const a = walletAddr('eth', ckdPub(b.slice(36, 69), b.slice(4, 36), n).pub);
-            add('Ethereum account ' + (n + 1) + ' (MetaMask)', a, 'https://debank.com/profile/', () => K.checkEvmAccount(a));
+            add('Ethereum account ' + (n + 1) + ' (MetaMask)', a, 'https://debank.com/profile/', () => K.checkEvmAccount(a), { account: true });
           }
           break;
         }
@@ -620,7 +639,7 @@
           if (b.length !== 80) break;
           for (let n = 1; n <= 4; n++) {
             const a = eip55(b.slice(20 * (n - 1), 20 * n));
-            add('Ethereum account ' + (n + 1) + ' (Ledger Live)', a, 'https://debank.com/profile/', () => K.checkEvmAccount(a));
+            add('Ethereum account ' + (n + 1) + ' (Ledger Live)', a, 'https://debank.com/profile/', () => K.checkEvmAccount(a), { account: true });
           }
           break;
         }

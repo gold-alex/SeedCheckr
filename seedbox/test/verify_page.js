@@ -37,7 +37,8 @@ function check(name, ok, detail) {
 // What the board, legend, rows and verdict say, read off the page.
 const snapshot = () => ({
   cells: [...document.querySelectorAll('#board .cell')].map((c) => c.className.replace(/\bcell\b|\bpop\b/g, '').trim()),
-  legend: Object.fromEntries([...document.querySelectorAll('#legend li')].map((li) => [li.className, Number(li.querySelector('b').textContent)])),
+  // entries sharing a class add up ("not checkable" and "skipped by you" are both l-skip cells)
+  legend: [...document.querySelectorAll('#legend li')].reduce((o, li) => Object.assign(o, { [li.className]: (o[li.className] || 0) + Number(li.querySelector('b').textContent) }), {}),
   rows: document.querySelectorAll('#rows li, #rows-nothing li').length,
   failedRows: [...document.querySelectorAll('#rows li .amount.failed')].length,
   noAnswer: [...document.querySelectorAll('#rows li .amount.failed')].filter((a) => a.textContent === 'did not answer').length,
