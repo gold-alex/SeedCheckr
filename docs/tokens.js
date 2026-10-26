@@ -115,6 +115,9 @@
     b2: 'b2', wemix: 'wemix', kite: 'kite', dbk: 'dbk',
   };
   const DEFI = ['eth', 'op', 'bsc', 'polygon', 'base', 'arb', 'avax', 'linea'];
+  // Morpho's API networks (chain id -> network key); its other networks are not on this page
+  const MORPHO = { 1: 'eth', 8453: 'base', 747474: 'katana', 999: 'hyperevm', 42161: 'arb', 137: 'polygon', 130: 'uni', 10: 'op', 480: 'world', 143: 'monad', 4663: 'hood' };
+  const MORPHO_API = 'https://blue-api.morpho.org/graphql';
   // Aave v3 pools, each checked live (it lists reserves; its first aToken's POOL() points back)
   const AAVE = { eth: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2', base: '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5', bsc: '0x6807dc923806fE8Fd134338EABCA509979a7e0cB', linea: '0xc47b8C00b0f69a36fa203Ffeac0334874574a8Ac',
     arb: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', op: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', polygon: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', avax: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
@@ -621,6 +624,32 @@
       return { usd: dep - debt, unvalued, addrs: new Set(found.map((x) => lc(x.addr))) };
     }
 
+    // Morpho: vault deposits (v1 and v2) and lending positions (supply and collateral less borrow)
+    // from Morpho's own API, one query for every network, shared by the networks' checks.
+    // -> { networkKey: { usd, unvalued, vaults: Set(vault address) } }
+    const morphoMemo = new Map();
+    const morpho = (addr) => { if (!morphoMemo.has(lc(addr))) morphoMemo.set(lc(addr), morphoAll(addr)); return morphoMemo.get(lc(addr)); };
+    async function morphoAll(addr) {
+      const a = JSON.stringify(addr), ids = Object.keys(MORPHO);
+      const query = '{ ' + ids.map((id) => 'c' + id + ': userByAddress(address: ' + a + ', chainId: ' + id + ') { vaultV2Positions { vault { address } assets assetsUsd } }').join(' ')
+        + ' v: vaultPositions(first: 200, where: { userAddress_in: [' + a + '] }) { items { vault { address chain { id } } state { assets assetsUsd } } }'
+        + ' m: marketPositions(first: 200, where: { userAddress_in: [' + a + '] }) { items { market { morphoBlue { chain { id } } } state { collateral collateralUsd borrowAssets borrowAssetsUsd supplyAssets supplyAssetsUsd } } } }';
+      const j = await D.fetchJSON(MORPHO_API, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) });
+      if (!j.data || !j.data.v || !j.data.m) throw new Error('unexpected answer');
+      const out = {};
+      const at = (id) => { const k = MORPHO[id]; return k ? (out[k] = out[k] || { usd: 0, unvalued: false, vaults: new Set() }) : null; };
+      const add = (o, raw, usd, sign) => { if (!(Number(raw) > 0)) return; if (usd == null || !Number.isFinite(Number(usd))) o.unvalued = true; else o.usd += sign * Number(usd); };
+      for (const id of ids) for (const p of ((j.data['c' + id] || {}).vaultV2Positions) || []) { const o = at(id); add(o, p.assets, p.assetsUsd, 1); o.vaults.add(lc(p.vault.address)); }
+      for (const p of j.data.v.items || []) { const o = at(p.vault.chain.id); if (!o) continue; add(o, p.state.assets, p.state.assetsUsd, 1); o.vaults.add(lc(p.vault.address)); }
+      for (const p of j.data.m.items || []) {
+        const o = at(p.market.morphoBlue.chain.id), st = p.state || {};
+        if (!o) continue;
+        add(o, st.supplyAssets, st.supplyAssetsUsd, 1); add(o, st.collateral, st.collateralUsd, 1); add(o, st.borrowAssets, st.borrowAssetsUsd, -1);
+      }
+      if ((j.data.v.items || []).length >= 200 || (j.data.m.items || []).length >= 200) for (const o of Object.values(out)) o.unvalued = true;
+      return out;
+    }
+
     // ---- EVM: every token of `addr` on network c; url = an RPC that answered ----
     async function evm(c, addr, url, opts) {
       const known = new Set((TOP[c.key] || []).map((t) => lc(t[1])).concat(c.tokens.map((t) => lc(t.addr)), NATIVE));
@@ -628,7 +657,18 @@
       const count = (xs) => new Set(xs.map(lc)).size;
       const covered = (a) => d && d.covered.has(lc(a));
       const av = await aave(c, url, (t.all || []).filter((x) => !covered(x.addr))).catch(() => null);
-      const free = (a) => !a || (!covered(a) && !(av && av.addrs.has(lc(a))));
+      // Morpho from its own API, in place of MetaMask's Morpho lines: MetaMask's adapter counts a
+      // vault share as one unit of the asset, but shares grow (889,528 steakUSDC were 1,019,047
+      // USDC on-chain, as Morpho's API says). MetaMask's lines stay only if Morpho's API fails.
+      const mo = Object.values(MORPHO).includes(c.key) ? await morpho(addr).then((m) => m[c.key] || null, () => 'failed') : null;
+      if (d && mo !== 'failed' && Object.values(MORPHO).includes(c.key)) d.holdings = d.holdings.filter((x) => !/morpho/i.test(x.symbol));
+      const free = (a) => !a || (!covered(a) && !(av && av.addrs.has(lc(a))) && !(mo && mo.vaults && mo.vaults.has(lc(a))));
+      if (mo === 'failed') t.partial = [t.partial, 'Morpho not checked'].filter(Boolean).join('; ');
+      else if (mo) {
+        if (mo.unvalued) t.partial = [t.partial, 'Morpho position not valued'].filter(Boolean).join('; ');
+        else if (mo.usd > 0) t.holdings.push({ symbol: 'USD in Morpho, after debt', amount: mo.usd, price: null, usdPrice: 1 });
+        t.others = t.others.filter(free);
+      }
       if (av) {
         if (av.unvalued) t.partial = [t.partial, 'Aave position not valued'].filter(Boolean).join('; ');
         else t.holdings.push({ symbol: 'USD in Aave, after debt', amount: Math.max(0, av.usd), price: null, usdPrice: 1 });
