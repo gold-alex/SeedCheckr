@@ -5,9 +5,10 @@
 //   error    - a payload that is not a SeedBox QR shows the error page
 //   offline  - every network blocked: each cell turns "no answer", the legend and the verdict say so;
 //              then the network comes back, Retry runs the failed ones again and the verdict recovers
+//   phone    - the demo on a throttled mid-range phone (Slow 4G, CPU 4x slower): verdict within 60 s
 //   demo     - the famous wallet, live: every cell resolves, legend counts add up to the board,
 //              rows match cells, the verdict is "are in possession", no page errors, no sideways scroll
-// usage: node verify_page.js [offline|demo|landing|error ...]   (default: all)
+// usage: node verify_page.js [offline|demo|landing|error|phone ...]   (default: all but phone)
 //        CHROME=/path/to/chrome node verify_page.js            (default: the macOS Chrome app)
 'use strict';
 const fs = require('fs');
@@ -123,6 +124,28 @@ const RUNS = {
     check('after retry the not-checkable ones are untouched', t.cells.filter((c) => c === 'skip').length === s.cells.filter((c) => c === 'skip').length);
     check('retry button only stays for what still failed', t.retry === null || /^Retry \d+ networks? that did not/.test(t.retry), t.retry || 'hidden');
     console.log('       after retry: ' + JSON.stringify(t.legend));
+    await page.close();
+  },
+  // the demo wallet on a mid-range phone over mobile data: Chrome's "Slow 4G" (1.6 Mbps down,
+  // 150 ms latency) and a CPU 4x slower than this machine's; reports how long the verdict takes
+  async phone(browser) {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    const cdp = await page.createCDPSession();
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 150, downloadThroughput: 1.6 * 1024 * 1024 / 8, uploadThroughput: 750 * 1024 / 8 });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    const t0 = Date.now();
+    await page.goto('http://127.0.0.1:' + server.address().port + '/#' + DEMO);
+    await page.waitForFunction(() => !document.querySelector('#casefile').hidden, { timeout: 180000 });
+    const took = (Date.now() - t0) / 1000;
+    const s = await page.evaluate(snapshot);
+    await boardChecks(s, errors);
+    check('verdict is "are in possession"', /are in possession/.test(s.verdict || ''), s.verdict);
+    check('verdict within 60 s on a slow phone', took <= 60, took.toFixed(1) + ' s');
+    console.log('       ' + took.toFixed(1) + ' s to the case file; ' + s.cells.length + ' networks: ' + JSON.stringify(s.legend));
     await page.close();
   },
   async demo(browser) {

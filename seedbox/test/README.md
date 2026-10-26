@@ -41,5 +41,6 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     # the page in a real browser (Chrome via puppeteer-core), phone sized: landing, a bad QR, every network
     # blocked (each cell and row must say "no answer"), and the live demo (every cell resolves, legend adds up)
     node verify_page.js         # or: node verify_page.js offline demo; CHROME=/path/to/chrome if not on macOS
+    node verify_page.js phone   # the demo on a throttled phone (Slow 4G, 4x slower CPU): verdict within 60 s (about 18 s)
 
 `test_portfolio "words..."` prints the payload and every address for one mnemonic. `test_frames < rows` prints the extension bytes and `FRAME|` lines for rows given as `<type hex> <raw hex>` lines. `test_qr URL PAYLOAD` (or `test_qr -t TEXT`, or `test_qr -f FRAMETEXT`) dumps the QR modules as text, exactly what the screen would show.
