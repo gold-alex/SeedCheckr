@@ -367,6 +367,32 @@
     // a pool of two junk tokens proves nothing. Price = the deepest such pool's rate times that
     // side's price; liquidity = twice what that side holds, over all such pools. DexScreener's
     // own dollar figures are not used. -> { addr: { price, liq } }
+    // Tokens still on four.meme's bonding curve (BNB Chain launches before they reach a DEX):
+    // the curve itself buys them back, so they count at what trySell says selling the whole
+    // balance returns, after its fee, in BNB or the launch's quote token. -> { addr: usd }
+    const FOUR_MEME = '0xF251F83e40a78868FcfA3FA4599Dad6494E46034', WBNB = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c';
+    async function curveValues(url, tokens) {
+      const word = (h, i) => BigInt('0x' + ((h || '').slice(2 + 64 * i, 2 + 64 * (i + 1)) || '0'));
+      const arg = (x) => x.toString(16).padStart(64, '0');
+      // four.meme's tokens carry vanity addresses ending 4444 or ffff: those are asked first
+      const list = tokens.slice().sort((a, b) => /(4444|ffff)$/i.test(b.addr) - /(4444|ffff)$/i.test(a.addr)).slice(0, 40);
+      const sold = await Promise.all(list.map(async (t) => {
+        const info = await D.rpc(url, 'eth_call', [{ to: FOUR_MEME, data: '0x1f69565f' + arg(BigInt(t.addr)) }, 'latest']);
+        if (word(info, 0) === 0n || word(info, 11) !== 0n) return null;   // not a four.meme token, or already on a DEX
+        const raw = BigInt(Math.floor(t.amount * 1e6)) * 10n ** 12n;      // four.meme tokens have 18 decimals
+        const r = await D.rpc(url, 'eth_call', [{ to: FOUR_MEME, data: '0xc6f43e8c' + arg(BigInt(t.addr)) + arg(raw) }, 'latest']);
+        const funds = word(r, 2), fee = word(r, 3), quote = '0x' + word(r, 1).toString(16).padStart(40, '0');
+        return funds > fee ? { t, net: funds - fee, quote: quote === '0x' + '0'.repeat(40) ? WBNB : quote } : null;
+      }).map((p) => p.catch(() => null)));
+      const hits = sold.filter(Boolean), out = {};
+      if (!hits.length) return out;
+      const px = await llamaPrices('bsc', [...new Set(hits.map((x) => x.quote))].concat(WBNB));
+      for (const x of hits) {
+        const q = px[lc(x.quote)];
+        if (q && q.price > 0 && q.decimals >= 0) out[lc(x.t.addr)] = Number(x.net) / 10 ** q.decimals * q.price;
+      }
+      return out;
+    }
     const dexCalls = [];   // when each recent lookup went out
     const dexBudget = () => { const now = Date.now(); while (dexCalls.length && now - dexCalls[0] > 60000) dexCalls.shift(); if (dexCalls.length >= DEX_CALLS) return false; dexCalls.push(now); return true; };
     async function dexPrices(key, addrs) {
@@ -399,7 +425,7 @@
       }
       valued.sort((a, b) => b.usd - a.usd);
       await Promise.all(valued.map(async (t, i) => {
-        if (known.has(lc(t.addr))) return;
+        if (known.has(lc(t.addr)) || t.exact) return;   // exact: what the token's own buyer pays (a launch curve)
         // selling usd worth into pools holding liq/2 of each side returns side * usd / (side + usd)
         const cap = (liq) => { const side = liq / 2; t.usd = liq < MIN_LIQ ? 0 : side * t.usd / (side + t.usd); };
         if (t.liq != null) cap(t.liq);
@@ -589,6 +615,11 @@
           if (unpriced.length) {
             dx = await dexPrices(c.key, unpriced).catch(() => ({}));
             for (const t of tokens) { const d = dx[lc(t.addr)]; if (t.price == null && d && d.price > 0) { t.price = d.price; t.liq = d.liq; } }
+          }
+          const onCurve = c.key === 'bsc' ? tokens.filter((t) => t.price == null && !spam(t)) : [];
+          if (onCurve.length) {
+            const cv = await curveValues(url, onCurve).catch(() => ({}));
+            for (const t of tokens) { const usd = cv[lc(t.addr)]; if (t.price == null && usd > 0) { t.price = usd / t.amount; t.exact = true; } }
           }
           const r = await judge(tokens, known);
           const partial = [list.more && 'first ' + list.length + ' tokens checked', noPrices && 'token prices not checked', dx.cut && 'not every unknown token looked up', !list.more && !noPrices && r.unverified && 'token values not cross-checked'].filter(Boolean).join('; ') || null;

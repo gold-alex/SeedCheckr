@@ -543,11 +543,11 @@
   // so 48 chains do not queue up three more requests each on rest.cosmos.directory.
   async function checkCosmos(c, addr) {
     const servers = [c.rest, c.rest2].filter(Boolean);
-    const ask = (list, path) => firstOk(list, (base) => fetchJSON(base + path));
+    const ask = (list, path, ms) => firstOk(list, (base) => fetchJSON(base + path, undefined, ms));
     const staking = servers.slice().reverse();
     const [j, del, unb, rew] = await Promise.all([ask(servers, '/cosmos/bank/v1beta1/balances/' + addr + '?pagination.limit=200'),
       ...['/cosmos/staking/v1beta1/delegations/' + addr, '/cosmos/staking/v1beta1/delegators/' + addr + '/unbonding_delegations', '/cosmos/distribution/v1beta1/delegators/' + addr + '/rewards']
-        .map((p) => ask(staking, p).catch((e) => (e.status === 404 || e.status === 501 ? {} : undefined)))]);   // 404/501: a chain without staking; anything else (a 429) was not checked
+        .map((p) => ask(staking, p, 8000).catch((e) => (e.status === 404 || e.status === 501 ? {} : undefined)))]);   // 404/501: a chain without staking; anything else (a 429, 8 s of silence) was not checked
     let native = 0n, others = 0;
     const holdings = [];
     for (const b of j.balances || []) {
