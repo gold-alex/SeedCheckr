@@ -624,6 +624,32 @@
       return { usd: dep - debt, unvalued, addrs: new Set(found.map((x) => lc(x.addr))) };
     }
 
+    // Vault shares (ERC-4626: Euler, Fluid, Yearn, Spark, Morpho off its API's networks...) have no DEX
+    // pool, so the liquidity check drops them. One counts when DefiLlama prices the share and the
+    // vault itself agrees: convertToAssets of one share times the asset's DefiLlama price within 2%
+    // of that price. -> [{ addr, symbol, amount, usd }]
+    async function vaults(c, url, cands) {
+      const word = (h, i = 0) => (/^0x[0-9a-fA-F]+$/.test(h || '') && h.length >= 66 + 64 * i ? BigInt('0x' + h.slice(2 + 64 * i, 66 + 64 * i)) : null);
+      const call = (to, data) => D.rpc(url, 'eth_call', [{ to, data }, 'latest']);
+      const got = (await Promise.all(cands.slice(0, 20).map(async (t) => {
+        const [a, dec] = await Promise.all([call(t.addr, '0x38d52e0f'), call(t.addr, '0x313ce567')]);   // asset(), decimals()
+        const asset = word(a), d = word(dec);
+        if (!asset || d == null || d > 36n) return null;
+        const per = word(await call(t.addr, '0x07a2d13a' + (10n ** d).toString(16).padStart(64, '0')));   // convertToAssets(one share)
+        return per ? { t, asset: '0x' + asset.toString(16).padStart(40, '0'), per } : null;
+      }).map((p) => p.catch(() => null)))).filter(Boolean);
+      if (!got.length) return [];
+      const px = await llamaPrices(LLAMA[c.key], [...new Set(got.map((x) => x.asset))]);
+      const out = [];
+      for (const x of got) {
+        const q = px[lc(x.asset)];
+        if (!q || !(q.price > 0) || !(q.decimals >= 0)) continue;
+        const implied = Number(x.per) / 10 ** q.decimals * q.price;
+        if (Math.abs(implied / x.t.price - 1) <= 0.02) out.push({ addr: x.t.addr, symbol: x.t.symbol, amount: x.t.amount, usd: x.t.amount * implied });
+      }
+      return out;
+    }
+
     // Morpho: vault deposits (v1 and v2) and lending positions (supply and collateral less borrow)
     // from Morpho's own API, one query for every network, shared by the networks' checks.
     // -> { networkKey: { usd, unvalued, vaults: Set(vault address) } }
@@ -662,7 +688,12 @@
       // USDC on-chain, as Morpho's API says). MetaMask's lines stay only if Morpho's API fails.
       const mo = Object.values(MORPHO).includes(c.key) ? await morpho(addr).then((m) => m[c.key] || null, () => 'failed') : null;
       if (d && mo !== 'failed' && Object.values(MORPHO).includes(c.key)) d.holdings = d.holdings.filter((x) => !/morpho/i.test(x.symbol));
-      const free = (a) => !a || (!covered(a) && !(av && av.addrs.has(lc(a))) && !(mo && mo.vaults && mo.vaults.has(lc(a))));
+      const taken = (a) => covered(a) || (av && av.addrs.has(lc(a))) || (mo && mo.vaults && mo.vaults.has(lc(a)));
+      // priced tokens the liquidity check dropped: vault shares, if the vault agrees with the price
+      const counted = new Set(t.holdings.map((x) => lc(x.addr)));
+      const vs = await vaults(c, url, (t.all || []).filter((x) => x.price > 0 && x.amount * x.price >= 10 && !counted.has(lc(x.addr)) && !taken(x.addr)).sort((p, q) => q.amount * q.price - p.amount * p.price)).catch(() => []);
+      for (const v of vs) t.holdings.push({ symbol: sym(v.symbol), amount: v.amount, price: null, usdPrice: v.usd / v.amount, addr: v.addr });
+      const free = (a) => !a || !taken(a);
       if (mo === 'failed') t.partial = [t.partial, 'Morpho not checked'].filter(Boolean).join('; ');
       else if (mo) {
         if (mo.unvalued) t.partial = [t.partial, 'Morpho position not valued'].filter(Boolean).join('; ');
