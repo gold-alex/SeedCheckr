@@ -654,7 +654,11 @@
     // from Morpho's own API, one query for every network, shared by the networks' checks.
     // -> { networkKey: { usd, unvalued, vaults: Set(vault address) } }
     const morphoMemo = new Map();
-    const morpho = (addr) => { if (!morphoMemo.has(lc(addr))) morphoMemo.set(lc(addr), morphoAll(addr)); return morphoMemo.get(lc(addr)); };
+    const morpho = (addr) => {
+      const k = lc(addr);
+      if (!morphoMemo.has(k)) morphoMemo.set(k, morphoAll(addr).catch((e) => { morphoMemo.delete(k); throw e; }));   // a failure is not kept: Retry asks again
+      return morphoMemo.get(k);
+    };
     async function morphoAll(addr) {
       const a = JSON.stringify(addr), ids = Object.keys(MORPHO);
       const query = '{ ' + ids.map((id) => 'c' + id + ': userByAddress(address: ' + a + ', chainId: ' + id + ') { vaultV2Positions { vault { address } assets assetsUsd } }').join(' ')
