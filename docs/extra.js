@@ -507,7 +507,8 @@
             const f = await fetchJSON('https://api.fastnear.com/v1/account/' + a + '/full').catch(() => null);
             const hs = [h('NEAR', units(BigInt(r.amount), 24), 'near')], gaps = [];
             if (!f) gaps.push('staking and tokens not checked');
-            const pools = (f && f.pools || []).slice(0, 20);
+            // liquid staking (Meta Pool, LiNEAR) shows up as tokens (stNEAR, LiNEAR), counted below: not again as a pool
+            const pools = (f && f.pools || []).filter((p) => !/^(meta-pool|linear-protocol)\.near$/.test(p.pool_id)).slice(0, 20);
             const view = (pool) => firstOk(['https://rpc.fastnear.com', 'https://rpc.mainnet.near.org'], async (u) => {
               const j = await fetchJSON(u, post({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'call_function', finality: 'final', account_id: pool, method_name: 'get_account_total_balance', args_base64: btoa(JSON.stringify({ account_id: a })) } }));
               if (j.error || !j.result || !Array.isArray(j.result.result)) throw new Error('unexpected answer');

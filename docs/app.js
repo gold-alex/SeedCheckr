@@ -274,7 +274,7 @@
   // Each request has one deadline that also covers time spent waiting for a slot, so a
   // hung host can't stack its timeouts wave after wave; the request fails on time and the
   // network's fallback endpoint gets its turn.
-  const HOST_LIMIT = 6;
+  const HOST_LIMIT = 6, SLOT_HOLD = 5000;
   const hostSlots = new Map();
   function timeoutError() { return new Error('timed out'); }
   async function withHost(url, deadline, fn) {
@@ -288,16 +288,25 @@
         q.wait.push(go);
       });
     }
+    // a request still running after SLOT_HOLD gives its slot up (and carries on): one hung chain
+    // must not hold most of rest.cosmos.directory's slots while 45 others queue behind it
     q.busy++;
-    try { return await fn(); } finally { q.busy--; const next = q.wait.shift(); if (next) next(); }
+    let held = true;
+    const release = () => { if (!held) return; held = false; q.busy--; const next = q.wait.shift(); if (next) next(); };
+    const hold = setTimeout(release, SLOT_HOLD);
+    try { return await fn(); } finally { clearTimeout(hold); release(); }
   }
   // A host that has let three requests in a row run 5 s or more into their timeout, and
   // answered none since, is taken as down: further requests to it fail at once, so a wallet
   // scan's next address goes straight to the fallback instead of waiting 15 s each time.
+  // A server is its host plus the first part of the path: rest.cosmos.directory serves 46 chains,
+  // and one hung chain must not take the other 45 down. Timeouts that land together (one
+  // chain's three staking queries) count once.
   const silent = new Map();
-  const notAnswering = (host) => { if ((silent.get(host) || 0) >= 3) throw new Error('not answering'); };
+  const notAnswering = (host) => { if ((silent.get(host) || {}).n >= 3) throw new Error('not answering'); };
+  const timedOut = (host) => { const s = silent.get(host) || { n: 0, at: 0 }; if (Date.now() - s.at >= 1000) { s.n++; s.at = Date.now(); } silent.set(host, s); };
   async function fetchOnce(url, opts, timeoutMs, as) {
-    const deadline = Date.now() + (timeoutMs || 15000), host = new URL(url).host;
+    const u0 = new URL(url), deadline = Date.now() + (timeoutMs || 15000), host = u0.host + '/' + u0.pathname.split('/')[1];
     for (let attempt = 0; ; attempt++) {
       notAnswering(host);
       if (Date.now() >= deadline) throw timeoutError();
@@ -308,9 +317,9 @@
         const t0 = Date.now();
         try {
           let r;
-          try { r = await fetch(url, Object.assign({}, opts, { signal: c.signal })); silent.set(host, 0); }
+          try { r = await fetch(url, Object.assign({}, opts, { signal: c.signal })); silent.delete(host); }
           catch (e) {
-            if (e && e.name === 'AbortError') { if (Date.now() - t0 >= 5000) silent.set(host, (silent.get(host) || 0) + 1); throw timeoutError(); }
+            if (e && e.name === 'AbortError') { if (Date.now() - t0 >= 5000) timedOut(host); throw timeoutError(); }
             // A 429/5xx without CORS headers reaches the page as a network error, not a
             // status (Haskoin's 503s do this), so a network error is retried like one.
             return { retry: 'network error' };
@@ -354,7 +363,8 @@
         running++;
         timer = setTimeout(start, HEDGE_MS);
         Promise.resolve().then(() => fn(u)).then((v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } }, (e) => {
-          last = e; running--;
+          if (!(last && last.status && !e.status)) last = e;   // a server's own answer (a 404) says more than another's timeout
+          running--;
           if (done) return;
           if (next < urls.length) start();
           else if (!running) { done = true; reject(last); }
@@ -524,19 +534,23 @@
     for (const m of markets) {
       const j = await fetchJSON('https://api.kamino.finance/kamino-market/' + m + '/users/' + addr + '/obligations');
       if (!Array.isArray(j)) throw new Error('unexpected answer');
-      for (const o of j) usd += Math.max(0, Number(o.refreshedStats && o.refreshedStats.netAccountValue) || 0);
+      for (const o of j) {
+        const v = Number(o.refreshedStats && o.refreshedStats.netAccountValue);
+        if (!Number.isFinite(v)) throw new Error('unexpected answer');
+        usd += Math.max(0, v);
+      }
     }
     return usd;
   }
-  // opts.extra: a further account (Phantom 2-5, other paths). Its DeFi searches (four more on
-  // the one RPC that allows them, which takes about one a second) run only when it holds at
-  // least 0.01 SOL, which any account that opened a position or loan keeps for fees.
+  // opts.extra: a further account (Phantom 2-5, other paths). The DeFi searches are four more
+  // calls to the one RPC that allows them, which takes about one a second, so a further account
+  // with under 0.01 SOL runs them only if it ever had a token account (a position or loan needs one).
   async function checkSol(addr, opts) {
     const bal = firstOk(SOL_RPCS, (u) => rpc(u, 'getBalance', [addr]));
-    const defi = !(opts && opts.extra) || bal.then((r) => BigInt(r.value) >= 10000000n, () => true);
-    const [r, staked, lent] = await Promise.all([bal, solStaked(addr).catch(() => null), Promise.resolve(defi).then((go) => (go ? kamino(addr) : 0)).catch(() => null)]);
-    let t;
-    try { t = await TOKENS.sol(addr, { positions: await defi }); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
+    const low = opts && opts.extra ? await bal.then((r) => BigInt(r.value) < 10000000n, () => false) : false;
+    const tok = TOKENS.sol(addr, { positions: low ? 'auto' : true }).catch(() => ({ holdings: [], others: 0, partial: 'tokens not checked', listed: -1 }));
+    const lending = low ? tok.then((t) => (t.listed === 0 ? 0 : kamino(addr))) : kamino(addr);
+    const [r, staked, lent, t] = await Promise.all([bal, solStaked(addr).catch(() => null), lending.catch(() => null), tok]);
     const holdings = [h('SOL', units(BigInt(r.value), 9), 'solana')];
     if (staked) holdings.push(h('SOL (staked)', units(staked, 9), 'solana'));
     if (lent > 0) holdings.push({ symbol: 'USD in Kamino, after debt', amount: lent, price: null, usdPrice: 1 });
@@ -576,7 +590,7 @@
     const staking = servers.slice().reverse();
     const [j, del, unb, rew] = await Promise.all([ask(servers, '/cosmos/bank/v1beta1/balances/' + addr + '?pagination.limit=200'),
       ...['/cosmos/staking/v1beta1/delegations/' + addr, '/cosmos/staking/v1beta1/delegators/' + addr + '/unbonding_delegations', '/cosmos/distribution/v1beta1/delegators/' + addr + '/rewards']
-        .map((p) => ask(staking, p, 8000).catch((e) => (e.status === 404 || e.status === 501 ? {} : undefined)))]);   // 404/501: a chain without staking; anything else (a 429, 8 s of silence) was not checked
+        .map((p) => ask(staking, p, 12000).catch((e) => (e.status === 404 || e.status === 501 ? {} : undefined)))]);   // 404/501: a chain without staking; anything else (a 429, 12 s of silence, queueing included) was not checked
     let native = 0n, others = 0;
     const holdings = [];
     for (const b of j.balances || []) {
@@ -1178,6 +1192,7 @@
     closeCamera();
     while (state.busy) await new Promise((r) => setTimeout(r, 100));   // a retry is still running
     state.busy = true;
+    silent.clear();   // servers taken as down during the first scan get another chance
     $('#retry').hidden = true;
     // further accounts the visitor chose not to check: shown as rows, never asked
     const skip = !$('#more-accounts').checked;
