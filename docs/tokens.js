@@ -115,6 +115,12 @@
     b2: 'b2', wemix: 'wemix', kite: 'kite', dbk: 'dbk',
   };
   const DEFI = ['eth', 'op', 'bsc', 'polygon', 'base', 'arb', 'avax', 'linea'];
+  // Aave v3 pools, each checked live (it lists reserves; its first aToken's POOL() points back)
+  const AAVE = { eth: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2', base: '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5', bsc: '0x6807dc923806fE8Fd134338EABCA509979a7e0cB', linea: '0xc47b8C00b0f69a36fa203Ffeac0334874574a8Ac',
+    arb: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', op: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', polygon: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', avax: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+    ftm: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', one: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', scroll: '0x11fCfe756c05AD438e312a7fd934381537D3cFfe', gnosis: '0xb50201558B00496A145fE76f7424749556E326D8',
+    metis: '0x90df02551bB792286e8D4f13E0e357b4Bf1D6a57', zksync: '0x78e30497a3c7527d953c6B1E3541b021A98Ac43c', celo: '0x3E59A31363E2ad014dcbc521c4a0d5757d9f3402', sonic: '0x5362dBb1e601abF3a4c14c22ffEdA64042E5eAA3',
+    mantle: '0x458F293454fE0d67EC0655f3672301301DD51422', soneium: '0xDd3d7A7d03D9fD9ef45f3E587287922eF65CA38B', plasma: '0x925a2A7214Ed92428B5b1B090F80b25700095e12', ink: '0x2816cf15F6d2A220E789aA011D5EE4eB6c47FEbA' };
   // Uniswap-v3-style position managers (each checked on-chain): [name, address, slipstream].
   // Slipstream (Aerodrome, Velodrome) keys pools by tick spacing instead of fee.
   const UNI = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88', CAKE = '0x46A15B0b27311cedF172AB29E4f4766fbE7F4364';
@@ -200,6 +206,8 @@
   // stablecoins of the non-EVM networks, trusted as they are (each checked on DefiLlama); on NEAR
   // also wrapped NEAR and the two big liquid-staking tokens, whose DEX pools are thin next to them
   const STABLE = {
+    cardano: ['c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad0014df105553444d', '8db269c3ec630e06ae29f74bc39edd1f87c819f1056206e879a1cd61446a65644d6963726f555344',
+      'f66d78b4a3cb3d37afa0ec36461e51ecbde00f26c8f0a68f94b6988069555344', 'fe7c786ab321f41c654ef6c1af7b3250a613c24e4213e0425a7ae45655534441'],   // USDM, DJED, iUSD, USDA
     near: ['usdt.tether-token.near', '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', 'wrap.near', 'meta-pool.near', 'linear-protocol.near'],
     tron: ['TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn', 'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4'],
     sui: ['0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC', '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT',
@@ -578,15 +586,54 @@
       return out;
     }
 
+    // Aave deposits and debt held as tokens, wherever MetaMask's DeFi API did not already count
+    // them: aTokens have no DEX pool, so the liquidity check would drop them, and debt tokens are
+    // often unpriced. A token counts as Aave's only if its POOL() is the network's Aave pool; it
+    // is worth its underlying asset 1:1. -> { usd, unvalued, addrs }
+    async function aave(c, url, tokens) {
+      const pool = AAVE[c.key];
+      const cands = pool ? tokens.filter((t) => /^(a[A-Z0-9]|variableDebt|stableDebt)/.test(t.symbol || '') && t.amount > 0).slice(0, 40) : [];
+      if (!cands.length) return null;
+      const word = (h) => (/^0x[0-9a-fA-F]{64}/.test(h || '') ? '0x' + h.slice(26, 66).toLowerCase() : null);
+      const found = (await Promise.all(cands.map(async (t) => {
+        const [p, u] = await Promise.all([D.rpc(url, 'eth_call', [{ to: t.addr, data: '0x7535d246' }, 'latest']), D.rpc(url, 'eth_call', [{ to: t.addr, data: '0xb16a19de' }, 'latest'])]);
+        return word(p) === lc(pool) && word(u) ? Object.assign({ underlying: word(u), debt: /Debt/.test(t.symbol) }, t) : null;
+      }).map((p) => p.catch(() => null)))).filter(Boolean);
+      if (!found.length) return null;
+      const px = await llamaPrices(LLAMA[c.key], [...new Set(found.map((x) => x.underlying))]);
+      let dep = 0, debt = 0, unvalued = false;
+      for (const x of found) {
+        const v = px[x.underlying];
+        if (!v || !(v.price > 0)) { unvalued = true; continue; }
+        if (x.debt) debt += x.amount * v.price; else dep += x.amount * v.price;
+      }
+      return { usd: dep - debt, unvalued, addrs: new Set(found.map((x) => lc(x.addr))) };
+    }
+
     // ---- EVM: every token of `addr` on network c; url = an RPC that answered ----
     async function evm(c, addr, url, opts) {
       const known = new Set((TOP[c.key] || []).map((t) => lc(t[1])).concat(c.tokens.map((t) => lc(t.addr)), NATIVE));
       const [t, d] = await Promise.all([tokenList(c, addr, url, known, opts), positions(c, addr, url, known).catch(() => null)]);
       const count = (xs) => new Set(xs.map(lc)).size;
-      if (!d) return Object.assign(t, { others: count(t.others), partial: [t.partial, 'DeFi positions not checked'].filter(Boolean).join('; ') });
-      const free = (a) => !a || !d.covered.has(lc(a));
+      const covered = (a) => d && d.covered.has(lc(a));
+      const av = await aave(c, url, (t.all || []).filter((x) => !covered(x.addr))).catch(() => null);
+      const free = (a) => !a || (!covered(a) && !(av && av.addrs.has(lc(a))));
+      if (av) {
+        if (av.unvalued) t.partial = [t.partial, 'Aave position not valued'].filter(Boolean).join('; ');
+        else t.holdings.push({ symbol: 'USD in Aave, after debt', amount: Math.max(0, av.usd), price: null, usdPrice: 1 });
+        t.others = t.others.filter(free);
+      }
+      // debt held as a token and not already netted by a DeFi position: the tokens become one
+      // line, their worth less the debt (the deposit it was borrowed against is among them)
+      const netted = (hs) => {
+        const debt = (t.debts || []).filter((x) => free(x.addr)).reduce((sum, x) => sum + x.usd, 0);
+        if (!(debt > 0)) return hs;
+        const worth = hs.reduce((sum, x) => sum + x.amount * (x.usdPrice || 0), 0);
+        return [{ symbol: 'USD in tokens, after debt', amount: Math.max(0, worth - debt), price: null, usdPrice: 1 }];
+      };
+      if (!d) return Object.assign(t, { holdings: netted(t.holdings.filter((x) => free(x.addr))), others: count(t.others), partial: [t.partial, 'DeFi positions not checked'].filter(Boolean).join('; ') });
       return {
-        holdings: t.holdings.filter((x) => free(x.addr)).concat(d.holdings),
+        holdings: netted(t.holdings.filter((x) => free(x.addr))).concat(d.holdings),
         others: count(t.others.filter(free).concat(d.others)),
         partial: [t.partial].concat(d.partial).filter(Boolean).join('; ') || null,
         note: t.note,
@@ -621,9 +668,11 @@
             const cv = await curveValues(url, onCurve).catch(() => ({}));
             for (const t of tokens) { const usd = cv[lc(t.addr)]; if (t.price == null && usd > 0) { t.price = usd / t.amount; t.exact = true; } }
           }
-          const r = await judge(tokens, known);
+          // debt tokens (Aave's variableDebt..., which DefiLlama prices below zero): what is owed
+          const debts = tokens.filter((t) => t.price < 0).map((t) => ({ addr: t.addr, usd: t.amount * -t.price }));
+          const r = await judge(tokens.filter((t) => !(t.price < 0)), known);
           const partial = [list.more && 'first ' + list.length + ' tokens checked', noPrices && 'token prices not checked', dx.cut && 'not every unknown token looked up', !list.more && !noPrices && r.unverified && 'token values not cross-checked'].filter(Boolean).join('; ') || null;
-          return { holdings: r.holdings, others: r.others, partial };
+          return { holdings: r.holdings, others: r.others, partial, debts, all: tokens };
         } catch (e) { /* fall through to the fixed list */ }
       }
       // fixed list: the stablecoins app.js prices by CoinGecko id, plus the network's top tokens

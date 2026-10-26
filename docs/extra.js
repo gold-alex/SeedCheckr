@@ -568,9 +568,17 @@
           add('Cardano', base, 'https://cardanoscan.io/stakekey/', async () => {
             return firstOk(['koios', 'yoroi'], async (src) => {
               if (src === 'koios') {
-                const j = await fetchJSON('https://graph.xray.app/output/services/koios/mainnet/api/v1/account_info', post({ _stake_addresses: [st] }));
+                const koios = 'https://graph.xray.app/output/services/koios/mainnet/api/v1/';
+                const [j, assets] = await Promise.all([fetchJSON(koios + 'account_info', post({ _stake_addresses: [st] })), fetchJSON(koios + 'account_assets', post({ _stake_addresses: [st] })).catch(() => null)]);
                 if (!Array.isArray(j)) throw new Error('unexpected answer');
-                return one(h('ADA', units(BigInt((j[0] || {}).total_balance || 0), 6), 'cardano'));   // [] = stake key never seen on chain
+                // total_balance includes unclaimed staking rewards; native tokens are valued like
+                // other tokens (DefiLlama by policy id + asset name, then the liquidity check)
+                const ada = h('ADA', units(BigInt((j[0] || {}).total_balance || 0), 6), 'cardano');   // [] = stake key never seen on chain
+                const rest = (Array.isArray(assets) ? assets : []).filter((a) => /^\d+$/.test(String(a.quantity)) && BigInt(a.quantity) > 0n).map((a) => ({ addr: a.policy_id + a.asset_name, raw: String(a.quantity) }));
+                let t = { holdings: [], others: rest.length, partial: null };
+                if (rest.length) try { t = await K.otherTokens('cardano', rest.slice(0, 400)); } catch (e) { t.partial = 'tokens not valued'; }
+                const cut = assets === null ? 'tokens not checked' : assets.length >= 1000 || rest.length > 400 ? 'first ' + Math.min(rest.length, 400) + ' tokens checked' : null;   // Koios pages at 1000 rows
+                return { holdings: [ada].concat(t.holdings), others: t.others, partial: [cut, t.partial].filter(Boolean).join('; ') || null };
               }
               const j = await fetchJSON('https://api.yoroiwallet.com/api/txs/utxoSumForAddresses', post({ addresses: [base] }));
               return { holdings: [h('ADA', units(BigInt(j.sum || 0), 6), 'cardano')], others: 0, partial: 'first address only' };
