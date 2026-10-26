@@ -47,6 +47,7 @@ const show = (name, r) => {
   const usd = r.holdings.reduce((s, x) => s + (x.usdPrice != null ? x.amount * x.usdPrice : 0), 0);
   const top = r.holdings.filter((x) => x.usdPrice != null).sort((a, b) => b.amount * b.usdPrice - a.amount * a.usdPrice).slice(0, 4).map((x) => x.symbol + ' $' + Math.round(x.amount * x.usdPrice)).join(', ');
   console.log(name.padEnd(18) + String(r.holdings.length).padStart(3) + ' counted  ' + String(r.others).padStart(4) + ' other  $' + Math.round(usd).toLocaleString().padEnd(12) + (r.partial ? '[' + r.partial + '] ' : '') + (r.note ? '(' + r.note + ') ' : '') + top);
+  for (const x of r.holdings.filter((x) => / in /.test(x.symbol))) console.log('    position: ' + x.symbol + ' ' + x.amount.toPrecision(4) + ' = $' + (x.amount * x.usdPrice).toFixed(2));
 };
 (async () => {
   const nets = EVM.filter((c) => !only || only.includes(c.key));

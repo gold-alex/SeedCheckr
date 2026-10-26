@@ -159,6 +159,22 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     memcpy(out[0].raw, a, 20);  out[0].rawlen = 20;
     memcpy(out[16].raw, a, 20); out[16].rawlen = 20; }
 
+  // ---- Ledger Live accounts 2-5: m/44'/60'/i'/0/0. The account level is hardened, so no
+  //      public key can stand in for them: the four addresses ride as record 0x7B on the INJ
+  //      row (the same ETH key family), 80 bytes. 3 EC multiplications each. ----
+  { uint32_t p[] = { 44|H, 60|H };
+    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    uint8_t pub65[65], h[32];
+    for (uint32_t i = 1; i <= 4; i++) {
+      n = parent;
+      if (!hdnode_private_ckd(&n, i|H) || !hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
+      hdnode_fill_public_key(&n);
+      if (!ecdsa_uncompress_pubkey(&secp256k1, n.public_key, pub65)) goto done;
+      keccak_256(pub65 + 1, 64, h);
+      memcpy(out[16].xraw + 20 * (i - 1), h + 12, 20);
+    }
+    out[16].xlen = 80; out[16].ext2 = 0x7B; }
+
   // ---- BTC zpub + first native segwit address ----
   { uint32_t p[] = { 84|H, 0|H };
     if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;

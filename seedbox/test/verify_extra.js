@@ -70,7 +70,7 @@ for (const m of mns) {
   const ext = dev.slice(20);                                                          // device rows after the 20 core rows
   const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x7F);                  // account xpub records
   ok(recs.length - acct.length === ext.length, 'one record per device extension row (' + (recs.length - acct.length) + ' vs ' + ext.length + ')');
-  ok(acct.length === 11, "eleven account key records");
+  ok(acct.length === 12, "twelve account records");
   const built = X.build(recs, K);
   const pageAddrs = new Set(built.map((c) => c.addr.replace(/^[PX]-/, '')));
   for (const [name, a] of ext) {
@@ -111,6 +111,14 @@ for (const m of mns) {
     ok(X.childAddrs(rec(0x74), 'btc-tr', 0, 4, 1)[0] === ref[2], 'taproot receive #4 == bip_utils');
     ok(X.childAddrs(rec(0x74), 'btc-tr', 1, 2, 1)[0] === ref[3], 'taproot change #2 == bip_utils');
   } catch (e) { console.log('(bip_utils not available: skipped MetaMask / taproot index checks)'); }
+  // Ledger Live accounts 2-5 (m/44'/60'/i'/0/0): the device sends the addresses, the page labels them
+  ok(rec(0x7B).length === 80, 'Ledger Live record is 4 addresses');
+  const ledger = built.filter((c) => / \(Ledger Live\)$/.test(c.name)).map((c) => c.addr);
+  ok(ledger.length === 4, 'page builds 4 Ledger Live accounts');
+  try {
+    const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();c=b.Bip44.FromSeed(s,b.Bip44Coins.ETHEREUM).Purpose().Coin();print('\\n'.join(c.Account(i).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress() for i in range(1,5)))", m], { encoding: 'utf8' }).trim().split('\n');
+    for (let i = 0; i < 4; i++) ok(ledger[i] === ref[i], 'Ledger Live account ' + (i + 2) + ' == bip_utils');
+  } catch (e) { console.log('(bip_utils not available: skipped the Ledger Live check)'); }
   for (const r of recs) types.add(r.type);
 }
 console.log('mnemonics: ' + mns.length + ', record types: ' + types.size + ', checks: ' + checks + ', failures: ' + fails);

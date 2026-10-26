@@ -23,7 +23,7 @@ typedef struct {
                        // gets in the animated "more chains" frames; see docs/EXTENSIONS.md
   uint8_t ext2;        // optional second record from the same row: the account's extended public key
   uint8_t xlen;        // (parent fingerprint, chain code, compressed key) so the page can scan every
-  uint8_t xraw[72];    // address of the wallet, not just the first one. 0 = none.
+  uint8_t xraw[80];    // address of the wallet, not just the first one (or 4 addresses: 0x7B). 0 = none.
 } ChainAddr;           // raw feeds the one-scan portfolio QR, see portfolio.h
 
 #define CHAINS_MAX 128   // upper bound on chains_count(); size ChainAddr arrays with this

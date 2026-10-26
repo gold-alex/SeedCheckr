@@ -105,7 +105,7 @@ SLIP-10 ed25519 unless noted; all path elements hardened.
 ### Whole wallets: account extended public keys
 
 These ride as a second record on an existing row (ChainAddr.ext2 / xraw), so the
-device's address list does not change. 69 bytes each: parent fingerprint (4, big
+device's address list does not change. 69 bytes each (0x7B excepted, see its row): parent fingerprint (4, big
 endian) || chain code (32) || compressed public key (33) of the account node. The
 page rebuilds the xpub and asks Haskoin for the balance of every used address
 (gap-limit scan), and that result replaces the matching first-address check.
@@ -123,6 +123,7 @@ page rebuilds the xpub and asks Haskoin for the balance of every used address
 | 0x78 | Dogecoin (page scans it itself) | m/44'/3'/0' | core row 5 (DOGE) |
 | 0x79 | Dash (page scans it itself) | m/44'/5'/0' | 0x17 |
 | 0x7A | Ravencoin (its Blockbook explorer scans the xpub) | m/44'/175'/0' | 0x1A |
+| 0x7B | Ledger Live Ethereum accounts 2-5: 80 bytes, four 20-byte addresses, not a key (the account level is hardened) | m/44'/60'/1'/0/0 .. m/44'/60'/4'/0/0 | core row 16 (INJ, the same ETH key) |
 
 For 0x74-0x76, 0x78 and 0x79 no xpub service answers a browser, so the page derives the addresses
 itself (BIP32 public derivation, plus the BIP86 tweak for taproot) and walks them
@@ -130,7 +131,7 @@ until 10 unused receive and 5 unused change addresses in a row, asking mempool.s
 blockstream.info / litecoinspace.org / BitPay's Bitcore (DOGE) / insight.dash.org about each,
 with BlockCypher as the fallback for DOGE and Dash (about 3 requests a second and 100 an hour
 per visitor, so those scans go 2 addresses at a time). For 0x77 it derives indexes 1-4
-(MetaMask's accounts 2-5) and checks each on the ten largest EVM networks.
+(MetaMask's accounts 2-5). Each of those, and each 0x7B address, is checked on every EVM network once it shows any sign of use (a balance on MetaMask's networks or a transaction on the ten largest).
 
 An extended public key reveals every address of that account (privacy, not funds):
 it goes to Haskoin only, never to price APIs.

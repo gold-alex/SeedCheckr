@@ -586,23 +586,21 @@
           }, { replaces: ['Ravencoin'] });
           break;
         }
-        // ---- MetaMask accounts 2-5 (m/44'/60'/0'/0/1..4) on the biggest EVM networks ----
+        // ---- MetaMask accounts 2-5 (m/44'/60'/0'/0/1..4), every EVM network once used ----
         case 0x77: {
           if (b.length !== 69) break;
-          const nets = ['eth', 'base', 'arb', 'op', 'polygon', 'bsc', 'avax', 'linea', 'zksync', 'scroll'].map(K.evm).filter(Boolean);
           for (let n = 1; n <= 4; n++) {
             const a = walletAddr('eth', ckdPub(b.slice(36, 69), b.slice(4, 36), n).pub);
-            add('Ethereum account ' + (n + 1) + ' (MetaMask), 10 networks', a, 'https://debank.com/profile/', async () => {
-              const rs = await Promise.allSettled(nets.map((c) => K.checkEvm(c, a)));
-              const holdings = []; let failed = 0, others = 0;
-              rs.forEach((r, i) => {
-                if (r.status !== 'fulfilled') { failed++; return; }
-                for (const x of r.value.holdings) if (x.amount > 0) holdings.push(Object.assign({}, x, { symbol: x.symbol + ' on ' + nets[i].name }));
-                others += r.value.others || 0;
-              });
-              if (failed === nets.length) throw new Error('no network answered');
-              return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others, partial: failed ? failed + ' of ' + nets.length + ' networks did not answer' : null };
-            });
+            add('Ethereum account ' + (n + 1) + ' (MetaMask)', a, 'https://debank.com/profile/', () => K.checkEvmAccount(a));
+          }
+          break;
+        }
+        // ---- Ledger Live accounts 2-5 (m/44'/60'/1..4'/0/0): hardened, so the device sends addresses ----
+        case 0x7B: {
+          if (b.length !== 80) break;
+          for (let n = 1; n <= 4; n++) {
+            const a = eip55(b.slice(20 * (n - 1), 20 * n));
+            add('Ethereum account ' + (n + 1) + ' (Ledger Live)', a, 'https://debank.com/profile/', () => K.checkEvmAccount(a));
           }
           break;
         }

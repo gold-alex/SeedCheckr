@@ -15,6 +15,12 @@
 // biggest tokens of each network (TOP) are trusted as they are. Everything else is
 // reported as "other tokens", which never decide the verdict.
 //
+// DeFi: positions that are not plain tokens (lending, staking, liquidity pools) come from
+// MetaMask's DeFi API (49 protocols, mostly on Ethereum), and Uniswap-v3-style liquidity
+// NFTs are also read on-chain on the networks below. A protocol with debt on a network
+// counts as one line, its deposits minus that debt. A receipt token counted as a position
+// (aUSDC, stETH, a pool token) is not counted again from the token list.
+//
 // Privacy: the explorer or wallet API (MetaMask, Rabby/DeBank) sees the address, as every
 // balance check does. DefiLlama and DexScreener see only token contracts, never the address.
 (function (root, factory) {
@@ -29,7 +35,7 @@
   // fx = Fantom GraphQL API. MM and RABBY below add mm / rb fallbacks.
   const SRC = {
     eth: [['rs', '1'], ['bs', 'https://eth.blockscout.com'], ['ep', 'https://api.ethplorer.io']],
-    base: [['bs', 'https://base.blockscout.com'], ['es', 'https://base.blockscout.com']],
+    base: [['bs', 'https://base.blockscout.com']],   // its Etherscan-style API is the same server: no help when that times out
     arb: [['bs', 'https://arbitrum.blockscout.com']],
     op: [['bs', 'https://explorer.optimism.io']],
     polygon: [['bs', 'https://polygon.blockscout.com']],
@@ -91,7 +97,8 @@
     kite: [['bs', 'https://kitescan.ai']],
     dbk: [['es', 'https://scan.dbkchain.io']],
   };
-  // MetaMask's Accounts API (chain id): no key, no rate limit seen, unpriced.
+  // MetaMask's Accounts API (chain id): no key, no rate limit seen, unpriced. Its DeFi API
+  // uses the same chain ids and covers the networks in DEFI.
   const MM = { eth: 1, op: 10, bsc: 56, polygon: 137, hyperevm: 999, monad: 143, seievm: 1329, avax: 43114, linea: 59144, base: 8453, arb: 42161, hood: 4663 };
   // Rabby's wallet API (its chain id; DeBank's index): priced and spam-flagged, but it blocks
   // a visitor for about 15 minutes after a handful of calls, so it comes last, is asked only
@@ -106,6 +113,30 @@
     monad: 'monad', katana: 'katana', etherlink: 'ethlink', xlayer: 'xlayer', fuse: 'fuse', sophon: 'sophon', plasma: 'plasma',
     cyber: 'cyber', imx: 'itze', megaeth: 'megaeth', hood: 'hood', xdc: 'xdc', og: 'g0', citrea: 'citrea',
     b2: 'b2', wemix: 'wemix', kite: 'kite', dbk: 'dbk',
+  };
+  const DEFI = ['eth', 'op', 'bsc', 'polygon', 'base', 'arb', 'avax', 'linea'];
+  // Uniswap-v3-style position managers (each checked on-chain): [name, address, slipstream].
+  // Slipstream (Aerodrome, Velodrome) keys pools by tick spacing instead of fee.
+  const UNI = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88', CAKE = '0x46A15B0b27311cedF172AB29E4f4766fbE7F4364';
+  const LP_NFT = {
+    eth: [['Uniswap V3', UNI], ['PancakeSwap V3', CAKE], ['SushiSwap V3', '0x2214A42d8e2A1d20635c2cb0664422c528B6A432']],
+    arb: [['Uniswap V3', UNI], ['PancakeSwap V3', CAKE], ['SushiSwap V3', '0xF0cBce1942A68BEB3d1b73F0dd86C8DCc363eF49']],
+    op: [['Uniswap V3', UNI], ['Velodrome', '0x416b433906b1B72FA758e166e239c43d68dC6F29', 1], ['Velodrome', '0xbB5DFE1380333CEE4c2EeBd7202c80dE2256AdF4', 1]],
+    polygon: [['Uniswap V3', UNI], ['SushiSwap V3', '0xb7402ee99F0A008e461098AC3A27F4957Df89a40']],
+    base: [['Uniswap V3', '0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1'], ['PancakeSwap V3', CAKE], ['SushiSwap V3', '0x80C7DD17B01855a6D2347444a0FCC36136a314de'],
+      ['Aerodrome', '0x827922686190790b37229fd06084350E74485b72', 1], ['Aerodrome', '0xa990C6a764b73BF43cee5Bb40339c3322FB9D55F', 1]],
+    bsc: [['PancakeSwap V3', CAKE], ['Uniswap V3', '0x7b8A01B39D58278b5DE7e48c8449c9f4F5170613']],
+    avax: [['Uniswap V3', '0x655C406EBFa14EE2006250925e54ec43AD184f8B']],
+    blast: [['Uniswap V3', '0xB218e4f7cF0533d4696fDfC419A0023D33345F28']],
+    uni: [['Uniswap V3', '0x943e6e07a7E8E791dAFC44083e54041D743C46E9']],
+    zksync: [['Uniswap V3', '0x0616e5762c1E7Dc3723c50663dF10a162D690a86'], ['PancakeSwap V3', '0xa815e2eD7f7d5B0c49fda367F249232a1B9D2883']],
+    world: [['Uniswap V3', '0xec12a9F9a09f50550686363766Cc153D03c27b5e']],
+    celo: [['Uniswap V3', '0x3d79EdAaBC0EaB6F08ED885C05Fc0B014290D95A']],
+    linea: [['PancakeSwap V3', CAKE], ['Uniswap V3', '0x4615C383F85D0a2BbED973d83ccecf5CB7121463']],
+    opbnb: [['PancakeSwap V3', CAKE]],
+    scroll: [['Uniswap V3', '0xB39002E4033b162fAc607fc3471E205FA2aE5967']],
+    ink: [['Uniswap V3', '0xC0836E5B058BBE22ae2266e1AC488A1A0fD8DCE8']],
+    mode: [['Velodrome', '0x991d5546C4B442B4c5fdc4c8B8b8d131DEB24702', 1]],
   };
   for (const [k, id] of Object.entries(MM)) (SRC[k] = SRC[k] || []).push(['mm', String(id)]);
   for (const [k, id] of Object.entries(RABBY)) (SRC[k] = SRC[k] || []).push(['rb', id]);
@@ -152,9 +183,12 @@
   const MIN_LIQ = 20000;  // USD in pools below which an unlisted token is airdrop bait, not money
   const PAGES = 4;        // token-list pages read per address (a spammed wallet can list thousands)
   const PRICED = 400;     // unpriced tokens sent to DefiLlama, 80 per request
+  const LP_MAX = 20;      // liquidity NFTs read per position manager, newest first
 
   const MM_API = 'https://accounts.api.cx.metamask.io/v4/multiaccount/balances';
   const RABBY_API = 'https://api.rabby.io/v1/user/';
+  const DEFI_API = 'https://defiadapters.api.cx.metamask.io/positions/';
+  const NATIVE = ['0x0000000000000000000000000000000000000000', '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'];   // how APIs write a network's own coin
 
   function make(D) {      // D: { fetchJSON, rpc, firstOk, units, solRpcs, ata }
     const lc = (s) => String(s || '').toLowerCase();
@@ -276,15 +310,15 @@
       return usd;
     }
 
-    // tokens [{ addr, symbol, amount, price }] -> { holdings, others, unverified }
+    // tokens [{ addr, symbol, amount, price }] -> { holdings, others: [addr], unverified }
     async function judge(tokens, known) {
-      const holdings = [];
-      let others = 0, unverified = 0;
+      const holdings = [], others = [];
+      let unverified = 0;
       const valued = [];
       for (const t of tokens) {
         if (!(t.amount > 0)) continue;
         const usd = t.price != null ? t.amount * t.price : 0;
-        if (usd >= MIN_USD) valued.push(Object.assign({ usd }, t)); else others++;
+        if (usd >= MIN_USD) valued.push(Object.assign({ usd }, t)); else others.push(t.addr);
       }
       valued.sort((a, b) => b.usd - a.usd);
       await Promise.all(valued.map(async (t, i) => {
@@ -296,18 +330,171 @@
         else { try { cap(await liquidity(t.addr)); } catch (e) { unverified++; } }
       }));
       for (const t of valued) {
-        if (t.usd >= MIN_USD) holdings.push({ symbol: sym(t.symbol), amount: t.amount, price: null, usdPrice: t.usd / t.amount });
-        else others++;
+        if (t.usd >= MIN_USD) holdings.push({ symbol: sym(t.symbol), amount: t.amount, price: null, usdPrice: t.usd / t.amount, addr: t.addr });
+        else others.push(t.addr);
       }
       return { holdings, others, unverified };
     }
 
-    // ---- EVM: every token of `addr` on network c; url = an RPC that answered ----
-    async function evm(c, addr, url) {
-      const known = new Set((TOP[c.key] || []).map((t) => lc(t[1])).concat(c.tokens.map((t) => lc(t.addr))));
-      if (SRC[c.key]) {
+    // ---- DeFi positions ----
+    const defiSeen = new Map();
+    const defiFor = (a) => {        // every position on every network, one call per address (null: no answer)
+      if (!defiSeen.has(a)) defiSeen.set(a, D.fetchJSON(DEFI_API + a, undefined, 20000).then((j) => (Array.isArray(j.data) ? j.data : null), () => null));
+      return defiSeen.get(a);
+    };
+    // a position token's priced parts (fees owed included); false when part of it has no price
+    function parts(t, out) {
+      if (t.type !== 'protocol' && t.price != null) {
+        const amount = Number(t.balance) || 0;
+        if (amount > 0) out.push({ addr: t.address, symbol: t.symbol, amount, price: Number(t.price) });
+        return true;
+      }
+      if (!(t.tokens || []).length) return !(Number(t.balance) > 0);
+      return t.tokens.reduce((ok, x) => parts(x, out) && ok, true);
+    }
+    const word = (hex, i) => hex.slice(2 + 64 * i, 66 + 64 * i);
+    const arg = (x) => (typeof x === 'bigint' ? BigInt.asUintN(256, x).toString(16) : x.slice(2).toLowerCase()).padStart(64, '0');
+    const int24 = (w) => Number(BigInt.asIntN(256, BigInt('0x' + w)));
+    const call = (url, to, data) => D.rpc(url, 'eth_call', [{ to, data }, 'latest']).then((r) => { if (!/^0x[0-9a-fA-F]*$/.test(r)) throw new Error('bad answer'); return r; });
+    function abiString(hex) {        // string, or bytes32 from old tokens; '?' when neither
+      const b = hex.slice(2);
+      try {
+        if (b.length >= 192) { const n = parseInt(b.slice(64, 128), 16); return decodeURIComponent(b.slice(128, 128 + 2 * Math.min(n, 64)).replace(/(..)/g, '%$1')); }
+        return decodeURIComponent(b.slice(0, 64).replace(/(00)+$/, '').replace(/(..)/g, '%$1'));
+      } catch (e) { return '?'; }
+    }
+    // Uniswap-v3-style liquidity NFTs of addr on network c, skipping those in skip
+    // -> [{ name, addr, symbol, amount }] (unpriced), and how many managers did not answer
+    async function lpNfts(c, addr, url, skip) {
+      const raw = [];
+      let failed = 0, more = 0;
+      await Promise.all((LP_NFT[c.key] || []).map(async ([name, npm, slip]) => {
         try {
-          const list = await D.firstOk(SRC[c.key], ([kind, arg]) => listers[kind](arg, addr));
+          const all = Number(BigInt(await call(url, npm, '0x70a08231' + arg(addr))));
+          if (!all) return;
+          if (all > LP_MAX) more++;
+          const n = Math.min(all, LP_MAX);
+          const factory = '0x' + word(await call(url, npm, '0xc45a0155'), 0).slice(24);
+          await Promise.all(Array.from({ length: n }, async (_, i) => { try {
+            const id = BigInt(await call(url, npm, '0x2f745c59' + arg(addr) + arg(BigInt(all - 1 - i))));   // newest first: old ones are mostly closed
+            if (skip.has(lc(npm) + ':' + id)) return;
+            const p = await call(url, npm, '0x99fbab88' + arg(id));
+            const t0 = '0x' + word(p, 2).slice(24), t1 = '0x' + word(p, 3).slice(24);
+            const lo = int24(word(p, 5)), hi = int24(word(p, 6)), L = Number(BigInt('0x' + word(p, 7)));
+            const owed0 = Number(BigInt('0x' + word(p, 10))), owed1 = Number(BigInt('0x' + word(p, 11)));
+            let a0 = owed0, a1 = owed1;
+            if (L > 0) {
+              const pool = '0x' + word(await call(url, factory, (slip ? '0x28af8d0b' : '0x1698ee82') + arg(t0) + arg(t1) + arg(BigInt(int24(word(p, 4))))), 0).slice(24);
+              const [s0, g0, g1, tLo, tHi, r0, r1] = await Promise.all([call(url, pool, '0x3850c7bd'), call(url, pool, '0xf3058399'), call(url, pool, '0x46141319'),
+                call(url, pool, '0xf30dba93' + arg(BigInt(lo))), call(url, pool, '0xf30dba93' + arg(BigInt(hi))),
+                call(url, t0, '0x70a08231' + arg(pool)), call(url, t1, '0x70a08231' + arg(pool))]);
+              // principal at the pool's current price
+              const sp = Number(BigInt('0x' + word(s0, 0))) / 2 ** 96, tick = int24(word(s0, 1));
+              const sa = Math.pow(1.0001, lo / 2), sb = Math.pow(1.0001, hi / 2), sq = Math.min(Math.max(sp, sa), sb);
+              a0 += L * (sb - sq) / (sb * sq);
+              a1 += L * (sq - sa);
+              // fees earned since the last collect: liquidity * growth inside the range since then
+              const M = 1n << 256n, o = slip ? 3 : 2, Lb = BigInt('0x' + word(p, 7));
+              const wrap = (x) => ((x % M) + M) % M;
+              const fees = (k, g) => {
+                const out0 = BigInt('0x' + word(tLo, o + k)), out1 = BigInt('0x' + word(tHi, o + k));
+                const inside = wrap(g - (tick >= lo ? out0 : g - out0) - (tick < hi ? out1 : g - out1));
+                return Number(Lb * wrap(inside - BigInt('0x' + word(p, 8 + k))) >> 128n);
+              };
+              // a position can never take out more than its pool holds: principal is capped there,
+              // and fees the pool could not pay mean a misread, so they are left out
+              const pool0 = Number(BigInt('0x' + word(r0, 0))), pool1 = Number(BigInt('0x' + word(r1, 0)));
+              const f0 = fees(0, BigInt('0x' + word(g0, 0))), f1 = fees(1, BigInt('0x' + word(g1, 0)));
+              a0 = Math.min(a0 + (a0 + f0 <= pool0 ? f0 : 0), pool0);
+              a1 = Math.min(a1 + (a1 + f1 <= pool1 ? f1 : 0), pool1);
+            }
+            raw.push({ name, addr: t0, raw: a0 }, { name, addr: t1, raw: a1 });
+          } catch (e) { failed++; } }));
+        } catch (e) { failed++; }
+      }));
+      const meta = {};
+      await Promise.all([...new Set(raw.filter((x) => x.raw > 0).map((x) => lc(x.addr)))].map(async (a) => {
+        try {
+          const [d, s] = await Promise.all([call(url, a, '0x313ce567'), call(url, a, '0x95d89b41').then(abiString, () => '?')]);
+          meta[a] = { dec: Number(BigInt(d)), symbol: s };
+        } catch (e) { failed++; }
+      }));
+      const out = raw.filter((x) => x.raw > 0 && meta[lc(x.addr)] && meta[lc(x.addr)].dec <= 36)
+        .map((x) => ({ name: x.name, addr: x.addr, symbol: meta[lc(x.addr)].symbol, amount: x.raw / 10 ** meta[lc(x.addr)].dec }));
+      return { list: out, failed, more };
+    }
+    // positions of addr on network c -> { holdings, others: [addr], covered: Set, partial }
+    async function positions(c, addr, url, known) {
+      const out = { holdings: [], others: [], covered: new Set(), partial: [] };
+      const supply = {}, debt = {}, unvalued = new Set(), unpriced = {};
+      const proto = (p) => String(p).replace(/[\u0000-\u001f\u007f-\u009f]/g, '').replace(/([a-z])V(\d)/g, '$1 V$2').trim().slice(0, 24) || '?';   // UniswapV3 -> Uniswap V3, as the on-chain names
+      if (MM[c.key] && DEFI.includes(c.key)) {
+        const all = await defiFor(addr);
+        if (!all) out.partial.push('DeFi positions not checked');
+        for (const p of all || []) {
+          if (!p.success || p.chainId !== MM[c.key]) continue;
+          const name = proto(p.protocolDisplayName || p.protocolId);
+          for (const t of p.tokens || []) {
+            const got = [];
+            const ok = parts(t, got);
+            if (p.positionType === 'borrow') {
+              if (!ok) unvalued.add(name);
+              debt[name] = (debt[name] || 0) + got.reduce((sum, x) => sum + x.amount * x.price, 0);
+            } else if (ok) (supply[name] = supply[name] || []).push(...got);
+            else { (unpriced[name] = unpriced[name] || []).push(t); continue; }   // the token list still sees its receipt token
+            out.covered.add(t.tokenId != null ? lc(t.address) + ':' + t.tokenId : lc(t.address));
+          }
+        }
+      }
+      // a deposit we cannot price next to a debt we can: counting the receipt token without the debt
+      // would overstate, so the whole protocol is left out and said so
+      for (const name of Object.keys(debt)) for (const t of unpriced[name] || []) { unvalued.add(name); out.covered.add(lc(t.address)); out.others.push(t.address); }
+      for (const name of unvalued) if (!supply[name]) out.partial.push('debt in ' + name + ' not valued');
+      if (LP_NFT[c.key]) {
+        const lp = await lpNfts(c, addr, url, out.covered);
+        if (lp.failed) out.partial.push('some liquidity positions not read');
+        if (lp.more) out.partial.push('newest ' + LP_MAX + ' liquidity positions per pool manager checked');
+        const p = await llamaPrices(LLAMA[c.key], [...new Set(lp.list.map((x) => x.addr))]);
+        for (const x of lp.list) {
+          const v = p[lc(x.addr)];
+          if (v) (supply[x.name] = supply[x.name] || []).push({ addr: x.addr, symbol: x.symbol, amount: x.amount, price: v.price });
+          else out.others.push(x.addr);
+        }
+      }
+      for (const [name, list] of Object.entries(supply)) {
+        const merged = {};                       // one line per token per protocol
+        for (const x of list) { const k = lc(x.addr); if (merged[k]) merged[k].amount += x.amount; else merged[k] = Object.assign({}, x); }
+        const r = await judge(Object.values(merged), known);
+        out.others.push(...r.others);
+        if (unvalued.has(name)) { out.others.push(...r.holdings.map((x) => x.addr)); out.partial.push('debt in ' + name + ' not valued'); continue; }
+        if (debt[name]) {
+          const net = r.holdings.reduce((sum, x) => sum + x.amount * x.usdPrice, 0) - debt[name];
+          out.holdings.push({ symbol: 'USD in ' + name + ', after debt', amount: Math.max(0, net), price: null, usdPrice: 1 });
+        } else for (const x of r.holdings) out.holdings.push(Object.assign(x, { symbol: x.symbol + ' in ' + name }));
+      }
+      return out;
+    }
+
+    // ---- EVM: every token of `addr` on network c; url = an RPC that answered ----
+    async function evm(c, addr, url, opts) {
+      const known = new Set((TOP[c.key] || []).map((t) => lc(t[1])).concat(c.tokens.map((t) => lc(t.addr)), NATIVE));
+      const [t, d] = await Promise.all([tokenList(c, addr, url, known, opts), positions(c, addr, url, known).catch(() => null)]);
+      const count = (xs) => new Set(xs.map(lc)).size;
+      if (!d) return Object.assign(t, { others: count(t.others), partial: [t.partial, 'DeFi positions not checked'].filter(Boolean).join('; ') });
+      const free = (a) => !a || !d.covered.has(lc(a));
+      return {
+        holdings: t.holdings.filter((x) => free(x.addr)).concat(d.holdings),
+        others: count(t.others.filter(free).concat(d.others)),
+        partial: [t.partial].concat(d.partial).filter(Boolean).join('; ') || null,
+        note: t.note,
+      };
+    }
+    // opts.extra: a further account of the seed; Rabby's few calls are kept for the first one
+    async function tokenList(c, addr, url, known, opts) {
+      const src = (SRC[c.key] || []).filter(([kind]) => !(opts && opts.extra && kind === 'rb'));
+      if (src.length) {
+        try {
+          const list = await D.firstOk(src, ([kind, arg]) => listers[kind](arg, addr));
           const tokens = list.filter((t) => t.addr && (t.amount != null ? t.amount > 0 : t.dec >= 0 && t.dec <= 36 && /^\d+$/.test(String(t.raw)) && BigInt(t.raw) > 0n))
             .map((t) => ({ addr: t.addr, symbol: t.symbol || '?', amount: t.amount != null ? t.amount : D.units(BigInt(t.raw), t.dec), price: t.price }));
           // the network's known big tokens first: a spammed wallet can list thousands
@@ -331,20 +518,20 @@
       res.forEach((r, i) => {
         if (r.status !== 'fulfilled' || !/^0x[0-9a-fA-F]+$/.test(r.value)) { failed++; return; }
         const t = list[i], amount = D.units(r.value === '0x' ? 0n : BigInt(r.value), t.dec);
-        if (t.cg) holdings.push({ symbol: t.symbol, amount, price: t.cg });
+        if (t.cg) holdings.push({ symbol: t.symbol, amount, price: t.cg, addr: t.addr });
         else if (amount > 0) toPrice.push(Object.assign({ amount }, t));
       });
-      let unpriced = 0;
+      const unpriced = [];
       if (toPrice.length) {
         const p = await llamaPrices(LLAMA[c.key], toPrice.map((t) => t.addr));
         for (const t of toPrice) {
           const usd = p[lc(t.addr)] && p[lc(t.addr)].price;
-          if (usd != null) holdings.push({ symbol: t.symbol, amount: t.amount, price: null, usdPrice: usd });
-          else unpriced++;
+          if (usd != null) holdings.push({ symbol: t.symbol, amount: t.amount, price: null, usdPrice: usd, addr: t.addr });
+          else unpriced.push(t.addr);
         }
       }
-      const what = SRC[c.key] ? 'token list did not answer; only major tokens checked' : null;
-      return { holdings, others: unpriced, partial: failed ? (list.length - failed) + ' of ' + list.length + ' tokens checked' : what, note: SRC[c.key] || !list.length ? null : 'only major tokens checked' };
+      const what = src.length ? 'token list did not answer; only major tokens checked' : null;
+      return { holdings, others: unpriced, partial: failed ? (list.length - failed) + ' of ' + list.length + ' tokens checked' : what, note: src.length || !list.length ? null : 'only major tokens checked' };
     }
 
     // ---- Solana ----
@@ -385,11 +572,11 @@
       const p = await llamaPrices('solana', rest);
       for (const t of tokens) { const v = p[lc(t.addr)]; if (t.price == null && v) { t.price = v.price; if (t.symbol === '?') t.symbol = v.symbol; } }
       const r = await judge(tokens, new Set(SOL_TOP.map((t) => lc(t[1]))));
-      return { holdings: r.holdings, others: r.others, partial: partial || (r.unverified ? 'token values not cross-checked' : null) };
+      return { holdings: r.holdings, others: r.others.length, partial: partial || (r.unverified ? 'token values not cross-checked' : null) };
     }
 
     return { evm, sol };
   }
 
-  return { make, SRC, TOP, LLAMA, SOL_TOP, MM, RABBY };
+  return { make, SRC, TOP, LLAMA, SOL_TOP, MM, RABBY, DEFI, LP_NFT };
 });

@@ -343,12 +343,41 @@
   // holdings decide the verdict; others is a count of tokens that do not.
   // Native coin from an RPC, then every token (tokens.js: explorer token lists, else the
   // network's biggest tokens by eth_call).
-  async function checkEvm(c, addr) {
+  async function checkEvm(c, addr, opts) {
     let url = c.rpcs[0];
     const bal = await firstOk(c.rpcs, async (u) => { const r = await rpc(u, 'eth_getBalance', [addr, 'latest']); url = u; return r; });
     let t;
-    try { t = await TOKENS.evm(c, addr, url); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
+    try { t = await TOKENS.evm(c, addr, url, opts); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
     return { holdings: [h(c.symbol, units(bal, 18), c.price)].concat(t.holdings), others: t.others, partial: t.partial, note: t.note };
+  }
+  // A further account of the same seed (MetaMask's account 2, Ledger Live's account 2, ...),
+  // checked on every EVM network once it shows any sign of use: a balance on MetaMask's
+  // networks (one call) or a transaction on the ten biggest. An account that only ever
+  // received coins on a smaller network, and nothing anywhere else, is missed.
+  const BIG_EVM = ['eth', 'base', 'arb', 'op', 'polygon', 'bsc', 'avax', 'linea', 'zksync', 'scroll'];
+  async function evmUsed(addr) {
+    const ids = Object.values(window.SeedTokens.MM);
+    // a MetaMask answer that is missing or leaves networks out is no proof of "unused" (a
+    // receive-only account has no transactions anywhere), so it counts as used
+    const mm = fetchJSON('https://accounts.api.cx.metamask.io/v4/multiaccount/balances?networks=' + ids.join(',') + '&accountAddresses=' + ids.map((i) => 'eip155:' + i + ':' + addr).join(','), undefined, 20000)
+      .then((j) => !Array.isArray(j.balances) || (j.unprocessedNetworks || []).length > 0 || j.balances.some((b) => Number(b.balance) > 0), () => true);
+    const sent = BIG_EVM.map((k) => EVM.find((c) => c.key === k)).map((c) => firstOk(c.rpcs, (u) => rpc(u, 'eth_getTransactionCount', [addr, 'latest'])).then((n) => BigInt(n) > 0n, () => false));
+    return (await Promise.all([mm].concat(sent))).some(Boolean);
+  }
+  async function checkEvmAccount(addr) {
+    if (!(await evmUsed(addr))) return { holdings: [h('ETH', 0, 'ethereum')], others: 0, partial: null, note: 'never used: no transaction on the ' + BIG_EVM.length + ' biggest networks, nothing on MetaMask\'s' };
+    const rs = await Promise.allSettled(EVM.map((c) => checkEvm(c, addr, { extra: true })));
+    const holdings = [], partly = [];
+    let failed = 0, others = 0;
+    rs.forEach((r, i) => {
+      if (r.status !== 'fulfilled') { failed++; return; }
+      for (const x of r.value.holdings) if (x.amount > 0) holdings.push(Object.assign({}, x, { symbol: x.symbol + ' on ' + EVM[i].name }));
+      others += r.value.others || 0;
+      if (r.value.partial) partly.push(EVM[i].name + ': ' + r.value.partial);
+    });
+    if (failed === EVM.length) throw new Error('no network answered');
+    const gaps = [failed && failed + ' of ' + EVM.length + ' networks did not answer', partly.length && partly.length + ' only partly checked (' + partly.slice(0, 3).join('; ') + (partly.length > 3 ? '; ...' : '') + ')'].filter(Boolean);
+    return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others, partial: gaps.length ? gaps.join(', ') : null, note: 'all ' + EVM.length + ' EVM networks checked' };
   }
   async function checkMempoolStyle(base, addr, symbol, price) {
     const j = await fetchJSON(base + addr);
@@ -900,7 +929,7 @@
   // frames the device shows after it (docs/EXTENSIONS.md). The page reads them with the
   // camera, decodes the records, and checks those networks too.
   const extraHelpers = {
-    fetchJSON, rpc, firstOk, units, h, checkEvm, checkMempoolStyle, checkBtc, checkLtc, checkBch, checkBsv, checkXecHash, checkCosmos, checkSol,
+    fetchJSON, rpc, firstOk, units, h, checkEvm, checkEvmAccount, checkMempoolStyle, checkBtc, checkLtc, checkBch, checkBsv, checkXecHash, checkCosmos, checkSol,
     fetchText: (url) => fetchOnce(url, undefined, 15000, 'text'),
     evm: (key) => EVM.find((c) => c.key === key),
   };
@@ -939,7 +968,7 @@
     state.results = supersede(state.results.concat(more), more);
     await showVerdict(state.results);
     state.busy = false;
-    $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR, including whole Bitcoin and Litecoin wallets and MetaMask accounts 2 to 5. The verdict above now covers ' + state.results.length + '.';
+    $('#more-text').textContent = 'Added ' + plural(state.results.length - before, 'network', 'networks') + ' from the moving QR, including whole Bitcoin and Litecoin wallets and Ethereum accounts 2 to 5 (MetaMask and Ledger Live). The verdict above now covers ' + state.results.length + '.';
     $('#verdict').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
   }
   function startScan() {
