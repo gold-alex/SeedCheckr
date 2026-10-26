@@ -164,7 +164,15 @@ int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) 
     if (slip10_pub(seed, p, 3, pub)) goto done;
     cu_row(&out[0], "SOL Ledger/Trust", "m/44'/501'/0'", "https://solscan.io/account/%s", 0x50);
     sz = CHAIN_ADDR_MAX; b58enc(out[0].addr, &sz, pub, 32);
-    memcpy(out[0].raw, pub, 32); out[0].rawlen = 32; }
+    memcpy(out[0].raw, pub, 32); out[0].rawlen = 32;
+    // Ledger Live's Solana accounts 2-5 (m/44'/501'/1..4'): hardened, so the four public keys
+    // ride as record 0x7E (128 bytes) on this row
+    for (uint32_t i = 1; i <= 4; i++) {
+      uint32_t q[] = { 44|H, 501|H, i|H };
+      if (slip10_pub(seed, q, 3, pub)) goto done;
+      memcpy(out[0].xraw + 32 * (i - 1), pub, 32);
+    }
+    out[0].xlen = 128; out[0].ext2 = 0x7E; }
 
   // 0x51 Solana m/44'/501'
   { uint32_t p[] = { 44|H, 501|H };

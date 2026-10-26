@@ -70,7 +70,7 @@ for (const m of mns) {
   const ext = dev.slice(20);                                                          // device rows after the 20 core rows
   const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x7F);                  // account xpub records
   ok(recs.length - acct.length === ext.length, 'one record per device extension row (' + (recs.length - acct.length) + ' vs ' + ext.length + ')');
-  ok(acct.length === 14, "fourteen account records");
+  ok(acct.length === 16, "sixteen account records");
   const built = X.build(recs, K);
   const pageAddrs = new Set(built.map((c) => c.addr.replace(/^[PX]-/, '')));
   for (const [name, a] of ext) {
@@ -113,7 +113,7 @@ for (const m of mns) {
   } catch (e) { console.log('(bip_utils not available: skipped MetaMask / taproot index checks)'); }
   // Ledger Live accounts 2-5 (m/44'/60'/i'/0/0): the device sends the addresses, the page labels them
   ok(rec(0x7B).length === 80, 'Ledger Live record is 4 addresses');
-  const ledger = built.filter((c) => / \(Ledger Live\)$/.test(c.name)).map((c) => c.addr);
+  const ledger = built.filter((c) => /^Ethereum account .* \(Ledger Live\)$/.test(c.name)).map((c) => c.addr);
   ok(ledger.length === 4, 'page builds 4 Ledger Live accounts');
   try {
     const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();c=b.Bip44.FromSeed(s,b.Bip44Coins.ETHEREUM).Purpose().Coin();print('\\n'.join(c.Account(i).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress() for i in range(1,5)))", m], { encoding: 'utf8' }).trim().split('\n');
@@ -128,6 +128,15 @@ for (const m of mns) {
     for (let i = 0; i < 4; i++) ok(phantom[i] === ref[i], 'Phantom account ' + (i + 2) + ' == bip_utils');
     for (let i = 0; i < 2; i++) ok(btcAcct[i] === ref[4 + i], 'Bitcoin segwit account ' + (i + 2) + ' zpub == bip_utils');
   } catch (e) { console.log('(bip_utils not available: skipped the Phantom / Bitcoin account check)'); }
+  // Ledger Live Solana accounts 2-5 (m/44'/501'/i') and taproot accounts 2-3 (m/86'/0'/1', 2')
+  const ledgerSol = built.filter((c) => /^Solana account \d \(Ledger Live\)$/.test(c.name)).map((c) => c.addr);
+  const taproot = built.filter((c) => /^Bitcoin taproot account [23] /.test(c.name)).map((c) => c.addr);
+  ok(ledgerSol.length === 4 && taproot.length === 2, 'page builds 4 Ledger Live Solana and 2 taproot accounts');
+  try {
+    const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();c=b.Bip44.FromSeed(s,b.Bip44Coins.SOLANA).Purpose().Coin();print('\\n'.join(c.Account(i).PublicKey().ToAddress() for i in range(1,5)));t=b.Bip86.FromSeed(s,b.Bip86Coins.BITCOIN).Purpose().Coin();print('\\n'.join(t.Account(i).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress() for i in (1,2)))", m], { encoding: 'utf8' }).trim().split('\n');
+    for (let i = 0; i < 4; i++) ok(ledgerSol[i] === ref[i], 'Ledger Live Solana account ' + (i + 2) + ' == bip_utils');
+    for (let i = 0; i < 2; i++) ok(taproot[i] === ref[4 + i], 'taproot account ' + (i + 2) + ' first address == bip_utils');
+  } catch (e) { console.log('(bip_utils not available: skipped the Ledger Live Solana / taproot account check)'); }
   for (const r of recs) types.add(r.type);
 }
 console.log('mnemonics: ' + mns.length + ', record types: ' + types.size + ', checks: ' + checks + ', failures: ' + fails);

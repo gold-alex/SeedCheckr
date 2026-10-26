@@ -16,7 +16,7 @@ Unknown types are skipped by `len`, so old pages keep working with new devices.
 
 ## Frames
 
-The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames (10 today).
+The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames (12 today).
 The device shows each for 400 ms (`MORE_FRAME_MS`), chosen with `seedbox/test/verify_screen.js`.
 Frame `i` (1-based) is one QR, alphanumeric mode only, ECC L, version 1-11:
 
@@ -105,7 +105,7 @@ SLIP-10 ed25519 unless noted; all path elements hardened.
 ### Whole wallets: account extended public keys
 
 These ride as a second record on an existing row (ChainAddr.ext2 / xraw), so the
-device's address list does not change. 69 bytes each (0x7B-0x7D excepted, see their rows): parent fingerprint (4, big
+device's address list does not change. 69 bytes each (0x7B-0x7F excepted, see their rows): parent fingerprint (4, big
 endian) || chain code (32) || compressed public key (33) of the account node. The
 page rebuilds the xpub and asks Haskoin for the balance of every used address
 (gap-limit scan), and that result replaces the matching first-address check.
@@ -125,6 +125,8 @@ page rebuilds the xpub and asks Haskoin for the balance of every used address
 | 0x7A | Ravencoin (its Blockbook explorer scans the xpub) | m/44'/175'/0' | 0x1A |
 | 0x7C | Phantom / Solflare accounts 2-5: 128 bytes, four ed25519 public keys (ed25519 has only hardened steps) | m/44'/501'/1'/0' .. m/44'/501'/4'/0' | core row 6 (SOL) |
 | 0x7D | Bitcoin native segwit accounts 2 and 3: 138 bytes, two 69-byte account keys back to back | m/84'/0'/1', m/84'/0'/2' | core row 2 (BTC addr 1) |
+| 0x7E | Ledger Live Solana accounts 2-5: 128 bytes, four ed25519 public keys | m/44'/501'/1' .. m/44'/501'/4' | extension row 0x50 (SOL Ledger/Trust) |
+| 0x7F | Bitcoin taproot accounts 2 and 3: 138 bytes, two 69-byte account keys back to back | m/86'/0'/1', m/86'/0'/2' | extension row 0x13 (LTC nested; its second slot was free) |
 | 0x7B | Ledger Live Ethereum accounts 2-5: 80 bytes, four 20-byte addresses, not a key (the account level is hardened) | m/44'/60'/1'/0/0 .. m/44'/60'/4'/0/0 | core row 16 (INJ, the same ETH key) |
 
 For 0x74-0x76, 0x78 and 0x79 no xpub service answers a browser, so the page derives the addresses

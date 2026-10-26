@@ -618,6 +618,28 @@
           }
           break;
         }
+        // ---- Ledger Live Solana accounts 2-5 (m/44'/501'/1..4'): four public keys ----
+        case 0x7E: {
+          if (b.length !== 128) break;
+          for (let n = 1; n <= 4; n++) {
+            const a = base58(b.slice(32 * (n - 1), 32 * n));
+            add('Solana account ' + (n + 1) + ' (Ledger Live)', a, 'https://solscan.io/account/', () => K.checkSol(a, { extra: true }), { account: true });
+          }
+          break;
+        }
+        // ---- Bitcoin taproot accounts 2 and 3 (m/86'/0'/1', 2'): two account keys, scanned like 0x74 ----
+        case 0x7F: {
+          if (b.length !== 138) break;
+          const apis = ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'];
+          for (let n = 1; n <= 2; n++) {
+            const k = b.slice(69 * (n - 1), 69 * n), first = childAddrs(k, 'btc-tr', 0, 0, 1)[0];
+            add('Bitcoin taproot account ' + (n + 1) + ' (every address)', first, 'https://mempool.space/address/', async () => {
+              const w = await scanWallet(k, 'btc-tr', (a) => firstOk(apis, (u) => utxoQuery(u, a, 'BTC')), [10, 5], 5);
+              return { holdings: [h('BTC', units(w.sats, 8), 'bitcoin')], others: 0, partial: null, note: w.used ? w.used + ' addresses used' : null };
+            }, { account: true });
+          }
+          break;
+        }
         // ---- whole wallets the page scans itself (no xpub service with browser access) ----
         case 0x74: case 0x75: case 0x76: case 0x78: case 0x79: {
           if (b.length !== 69) break;

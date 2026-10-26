@@ -234,6 +234,25 @@ int ext_utxo_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out
     hdnode_fill_public_key(&n);
     if (fill(d, &n, &out[i])) goto done;
   }
+  // taproot accounts 2 and 3 (m/86'/0'/1', m/86'/0'/2'): two account keys in the cu_xpub_record
+  // layout, record 0x7F (138 bytes). The taproot row already carries its own account key, so
+  // they ride on the LTC nested row, whose second slot is free (the page reads records by type).
+  for (int i = 0; i < N_ROWS; i++) if (ROWS[i].type == 0x13) {
+    HDNode parent = p86;
+    if (!hdnode_private_ckd(&parent, 0|H)) goto done;
+    uint32_t fp = hdnode_fingerprint(&parent);
+    for (uint32_t a = 1; a <= 2; a++) {
+      n = parent;
+      if (!hdnode_private_ckd(&n, a|H)) { memzero(&parent, sizeof parent); goto done; }
+      hdnode_fill_public_key(&n);
+      uint8_t* x = out[i].xraw + 69 * (a - 1);
+      x[0] = fp >> 24; x[1] = fp >> 16; x[2] = fp >> 8; x[3] = fp;
+      memcpy(x + 4, n.chain_code, 32);
+      memcpy(x + 36, n.public_key, 33);
+    }
+    memzero(&parent, sizeof parent);
+    out[i].xlen = 138; out[i].ext2 = 0x7F;
+  }
   rc = 0;
 done:
   memzero(&p44, sizeof p44); memzero(&p49, sizeof p49); memzero(&p86, sizeof p86); memzero(&n, sizeof n);
