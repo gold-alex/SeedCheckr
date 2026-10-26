@@ -255,6 +255,7 @@
   // Fallbacks for the single-source chains (each checked for browser CORS).
   const BTC_APIS = ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'];
   const XRP_RPCS = ['https://xrplcluster.com/', 'https://xrpl.ws/'];
+  const XRP_STABLES = { 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De 524C555344000000000000000000000000000000': ['RLUSD', 'ripple-usd'], 'rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE 5553444300000000000000000000000000000000': ['USDC', 'usd-coin'] };
   const APT_APIS = ['https://fullnode.mainnet.aptoslabs.com/v1', 'https://api.mainnet.aptoslabs.com/v1', 'https://aptos-rest.publicnode.com/v1'];
   const XAH_RPCS = ['https://xahau.network', 'https://xahau.org'];
   const ECLIPSE_RPC = 'https://mainnetbeta-rpc.eclipse.xyz';
@@ -328,8 +329,13 @@
     }
   }
   function fetchJSON(url, opts, timeoutMs) { return fetchOnce(url, opts, timeoutMs, 'json'); }
-  const TOKENS = window.SeedTokens.make({ fetchJSON, rpc, firstOk, units, solRpcs: SOL_RPCS, ata: (o, m, p) => window.SolanaATA.associatedTokenAddress(o, m, p) });
+  const TOKENS = window.SeedTokens.make({ fetchJSON, rpc, firstOk, units, solRpcs: SOL_RPCS, solScanRpcs: SOL_STAKE_RPCS, ata: (o, m, p) => window.SolanaATA.associatedTokenAddress(o, m, p),
+    pda: (seeds, p) => window.SolanaATA.findProgramAddress(seeds, p), b58decode: (x) => window.SolanaATA.b58decode(x), b58encode: (x) => window.SolanaATA.b58encode(x) });
+  // Solana Vibe Station answers the account searches no other public RPC allows, and refuses
+  // bursts: its requests leave 900 ms apart (measured: one a second is fine, three at once are not)
+  let vibeNext = 0;
   async function rpc(url, method, params) {
+    if (SOL_STAKE_RPCS.includes(url)) { const at = Math.max(Date.now(), vibeNext); vibeNext = at + 900; await new Promise((r) => setTimeout(r, at - Date.now())); }
     const j = await fetchJSON(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
     if (j.error) throw new Error(j.error.message || 'rpc error');
     return j.result;
@@ -505,13 +511,36 @@
     if (!Array.isArray(accts)) throw new Error('unexpected answer');
     return accts.reduce((sum, a) => sum + BigInt(a.account.lamports || 0), 0n);
   }
-  async function checkSol(addr) {
-    const [r, staked] = await Promise.all([firstOk(SOL_RPCS, (u) => rpc(u, 'getBalance', [addr])), solStaked(addr).catch(() => null)]);
+  // Kamino lending: one account search finds this wallet's obligations in every Kamino market
+  // (the owner sits at byte 64 of an obligation, its market at 32), then Kamino's API gives
+  // each market's refreshed net value, deposits minus debt, in USD.
+  const KAMINO = 'KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD';
+  async function kamino(addr) {
+    const accts = await firstOk(SOL_STAKE_RPCS, (u) => rpc(u, 'getProgramAccounts', [KAMINO,
+      { encoding: 'base64', dataSlice: { offset: 32, length: 32 }, filters: [{ dataSize: 3344 }, { memcmp: { offset: 64, bytes: addr } }] }]));
+    if (!Array.isArray(accts)) throw new Error('unexpected answer');
+    const markets = [...new Set(accts.map((a) => window.SolanaATA.b58encode(Uint8Array.from(atob(a.account.data[0]), (ch) => ch.charCodeAt(0)))))];
+    let usd = 0;
+    for (const m of markets) {
+      const j = await fetchJSON('https://api.kamino.finance/kamino-market/' + m + '/users/' + addr + '/obligations');
+      if (!Array.isArray(j)) throw new Error('unexpected answer');
+      for (const o of j) usd += Math.max(0, Number(o.refreshedStats && o.refreshedStats.netAccountValue) || 0);
+    }
+    return usd;
+  }
+  // opts.extra: a further account (Phantom 2-5, other paths). Its DeFi searches (four more on
+  // the one RPC that allows them, which takes about one a second) run only when it holds at
+  // least 0.01 SOL, which any account that opened a position or loan keeps for fees.
+  async function checkSol(addr, opts) {
+    const bal = firstOk(SOL_RPCS, (u) => rpc(u, 'getBalance', [addr]));
+    const defi = !(opts && opts.extra) || bal.then((r) => BigInt(r.value) >= 10000000n, () => true);
+    const [r, staked, lent] = await Promise.all([bal, solStaked(addr).catch(() => null), Promise.resolve(defi).then((go) => (go ? kamino(addr) : 0)).catch(() => null)]);
     let t;
-    try { t = await TOKENS.sol(addr); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
+    try { t = await TOKENS.sol(addr, { positions: await defi }); } catch (e) { t = { holdings: [], others: 0, partial: 'tokens not checked' }; }
     const holdings = [h('SOL', units(BigInt(r.value), 9), 'solana')];
     if (staked) holdings.push(h('SOL (staked)', units(staked, 9), 'solana'));
-    return { holdings: holdings.concat(t.holdings), others: t.others, partial: [t.partial, staked === null && 'staking not checked'].filter(Boolean).join('; ') || null };
+    if (lent > 0) holdings.push({ symbol: 'USD in Kamino, after debt', amount: lent, price: null, usdPrice: 1 });
+    return { holdings: holdings.concat(t.holdings), others: t.others, partial: [t.partial, staked === null && 'staking not checked', lent === null && 'Kamino not checked'].filter(Boolean).join('; ') || null };
   }
   async function checkTrx(addr) {
     const j = await fetchJSON('https://api.trongrid.io/v1/accounts/' + addr);
@@ -619,7 +648,21 @@
     if (r.error === 'actNotFound') drops = 0n;
     else if (r.error || r.status === 'error') throw new Error(r.error_message || r.error || 'xrpl error');
     else drops = BigInt(r.account_data.Balance);
-    return { holdings: [h('XRP', units(drops, 6), 'ripple')], others: 0, partial: null };
+    const holdings = [h('XRP', units(drops, 6), 'ripple')];
+    if (r.error === 'actNotFound') return { holdings, others: 0, partial: null };
+    // tokens are trust lines: Ripple's RLUSD and Circle's USDC count (issuers checked by their
+    // on-chain domains, ripple.com and circle.com); any other line is an "other token"
+    let others = 0, partial = null;
+    try {
+      const l = await firstOk(XRP_RPCS, (u) => fetchJSON(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'account_lines', params: [{ account: addr, ledger_index: 'validated', limit: 400 }] }) }));
+      if (!l.result || !Array.isArray(l.result.lines)) throw new Error('unexpected answer');
+      for (const x of l.result.lines) {
+        const st = XRP_STABLES[x.account + ' ' + x.currency], amt = Number(x.balance);
+        if (st && amt > 0) holdings.push(h(st[0], amt, st[1])); else if (amt > 0) others++;
+      }
+      if (l.result.marker) partial = 'first 400 tokens checked';
+    } catch (e) { partial = 'tokens not checked'; }
+    return { holdings, others, partial };
   }
   // Sui's public JSON-RPC nodes send no CORS headers (and are being retired); the GraphQL service does.
   const suiQuery = async (query, variables) => {

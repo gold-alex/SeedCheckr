@@ -433,7 +433,7 @@
         else { try { cap(await liquidity(t.addr)); } catch (e) { unverified++; } }
       }));
       for (const t of valued) {
-        if (t.usd >= MIN_USD) holdings.push({ symbol: sym(t.symbol), amount: t.amount, price: null, usdPrice: t.usd / t.amount, addr: t.addr });
+        if (t.usd >= MIN_USD) holdings.push({ symbol: sym(t.symbol) + (t.where || ''), amount: t.amount, price: null, usdPrice: t.usd / t.amount, addr: t.addr });
         else others.push(t.addr);
       }
       return { holdings, others, unverified };
@@ -668,9 +668,132 @@
     }
 
     // ---- Solana ----
+    // getMultipleAccounts, 10 at a time: publicnode refuses more in one call
+    async function many(keys, encoding) {
+      const parts = [];
+      for (let i = 0; i < keys.length; i += 10) parts.push(keys.slice(i, i + 10));
+      const got = await Promise.all(parts.map((p) => D.firstOk(D.solRpcs, (u) => D.rpc(u, 'getMultipleAccounts', [p, { encoding }]))));
+      return got.flatMap((r) => r.value || []);
+    }
+    // Orca Whirlpool and Raydium CLMM positions: NFTs in the wallet, each with a position
+    // account at a PDA of its mint. Amounts from liquidity, range and the pool's price (the
+    // Uniswap v3 formulas, prices in Q64.64), plus fees already owed to the position; fees
+    // accrued since its last update are left out. -> [{ addr: mint, amount }] per token, and
+    // the position mints (which are not counted again as tokens)
+    const CLMM = [
+      // program, position: [pool, liquidity, tick lower, tick upper, fee owed a, fee owed b], pool: [sqrt price, mint a, mint b]
+      ['whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc', [8, 72, 88, 92, 112, 136], [65, 101, 181], 'Orca'],
+      ['CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', [41, 81, 73, 77, 129, 137], [253, 73, 105], 'Raydium'],
+    ];
+    async function clmmPositions(mints) {
+      const legs = [], held = [];
+      if (!mints.length) return { legs, held };
+      const seed = new TextEncoder().encode('position');
+      const keys = [], meta = [];
+      for (const m of mints.slice(0, 30)) for (const c of CLMM) { keys.push(D.pda([seed, D.b58decode(m)], c[0])); meta.push({ m, c }); }
+      const accs = await many(await Promise.all(keys), 'base64');
+      const bytes = (a) => Uint8Array.from(atob(a.data[0]), (ch) => ch.charCodeAt(0));
+      const view = (b) => new DataView(b.buffer);
+      const u128 = (v, o) => v.getBigUint64(o, true) + (v.getBigUint64(o + 8, true) << 64n);
+      const key = (b, o) => D.b58encode(b.subarray(o, o + 32));
+      const pos = [];
+      accs.forEach((a, i) => {
+        if (!a || a.owner !== meta[i].c[0]) return;
+        const b = bytes(a), v = view(b), o = meta[i].c[1];
+        pos.push({ mint: meta[i].m, c: meta[i].c, pool: key(b, o[0]), L: u128(v, o[1]), lo: v.getInt32(o[2], true), hi: v.getInt32(o[3], true), feeA: v.getBigUint64(o[4], true), feeB: v.getBigUint64(o[5], true) });
+      });
+      if (!pos.length) return { legs, held };
+      const poolKeys = [...new Set(pos.map((p) => p.pool))];
+      const pools = {};
+      (await many(poolKeys, 'base64')).forEach((a, i) => { if (a) pools[poolKeys[i]] = bytes(a); });
+      const tokenMints = new Set();
+      for (const p of pos) {
+        const b = pools[p.pool];
+        if (!b) continue;
+        const v = view(b), q = p.c[2];
+        Object.assign(p, { sqrt: Number(u128(v, q[0])) / 2 ** 64, a: key(b, q[1]), bm: key(b, q[2]) });
+        tokenMints.add(p.a); tokenMints.add(p.bm);
+      }
+      const px = await llamaPrices('solana', [...tokenMints]);   // decimals (and prices) by mint
+      for (const p of pos) {
+        if (p.sqrt == null) continue;
+        const da = px[lc(p.a)], db = px[lc(p.bm)];
+        held.push(p.mint);
+        if (!da || !db) continue;
+        const L = Number(p.L), sa = Math.pow(1.0001, p.lo / 2), sb = Math.pow(1.0001, p.hi / 2), sp = Math.min(Math.max(p.sqrt, sa), sb);
+        const rawA = L * (sb - sp) / (sp * sb) + Number(p.feeA), rawB = L * (sp - sa) + Number(p.feeB);
+        for (const [m, raw, d] of [[p.a, rawA, da], [p.bm, rawB, db]]) if (raw > 0) legs.push({ addr: m, symbol: /^[a-z0-9]+$/.test(d.symbol || '') ? d.symbol.toUpperCase() : d.symbol || '?', where: ' in ' + p.c[3], amount: raw / 10 ** d.decimals, price: d.price });
+      }
+      return { legs, held };
+    }
+    // Meteora DLMM positions: accounts the wallet owns (owner at byte 40), not NFTs. Each holds
+    // liquidity shares for up to 70 bins; a bin's reserves split by its share of the bin's total
+    // (bins live in bin arrays of 70, PDAs of the pair and the array index). Pending fees are
+    // left out. -> legs like clmmPositions
+    const DLMM = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo';
+    async function dlmmPositions(addr) {
+      const legs = [];
+      const accts = await D.firstOk(D.solScanRpcs, (u) => D.rpc(u, 'getProgramAccounts', [DLMM, { encoding: 'base64', filters: [{ memcmp: { offset: 40, bytes: addr } }] }]));
+      if (!Array.isArray(accts)) throw new Error('unexpected answer');
+      const bytes = (s) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
+      const u128 = (v, o) => v.getBigUint64(o, true) + (v.getBigUint64(o + 8, true) << 64n);
+      const pos = accts.map((a) => bytes(a.account.data[0])).filter((b) => b.length >= 7920).slice(0, 20).map((b) => {
+        const v = new DataView(b.buffer);
+        return { v, pair: D.b58encode(b.subarray(8, 40)), lo: v.getInt32(7912, true), hi: v.getInt32(7916, true) };
+      }).filter((p) => p.hi >= p.lo && p.hi - p.lo < 70);
+      if (!pos.length) return legs;
+      const pairKeys = [...new Set(pos.map((p) => p.pair))], pairs = {};
+      (await many(pairKeys, 'base64')).forEach((a, i) => { if (a) { const b = bytes(a.data[0]); pairs[pairKeys[i]] = [D.b58encode(b.subarray(88, 120)), D.b58encode(b.subarray(120, 152))]; } });
+      const arr = (b) => Math.floor(b / 70), want = [], seed = new TextEncoder().encode('bin_array');
+      for (const p of pos) for (let i = arr(p.lo); i <= arr(p.hi); i++) if (!want.some((w) => w.pair === p.pair && w.i === i)) want.push({ pair: p.pair, i });
+      const keys = await Promise.all(want.map((w) => { const ib = new Uint8Array(8); new DataView(ib.buffer).setBigInt64(0, BigInt(w.i), true); return D.pda([seed, D.b58decode(w.pair), ib], DLMM); }));
+      const arrays = {};
+      (await many(keys, 'base64')).forEach((a, k) => { if (a) arrays[want[k].pair + ' ' + want[k].i] = new DataView(bytes(a.data[0]).buffer); });
+      const sums = [];
+      for (const p of pos) {
+        const mints = pairs[p.pair];
+        if (!mints) continue;
+        let x = 0n, y = 0n;
+        for (let b = p.lo; b <= p.hi; b++) {
+          const share = u128(p.v, 72 + 16 * (b - p.lo)), ba = arrays[p.pair + ' ' + arr(b)];
+          if (!share || !ba) continue;
+          const o = 56 + 144 * (b - arr(b) * 70), supply = u128(ba, o + 32);
+          if (supply) { x += ba.getBigUint64(o, true) * share / supply; y += ba.getBigUint64(o + 8, true) * share / supply; }
+        }
+        sums.push([mints[0], x], [mints[1], y]);
+      }
+      const px = await llamaPrices('solana', [...new Set(sums.map((x) => x[0]))]);
+      for (const [m, raw] of sums) {
+        const d = px[lc(m)];
+        if (d && raw > 0n) legs.push({ addr: m, symbol: /^[a-z0-9]+$/.test(d.symbol || '') ? d.symbol.toUpperCase() : d.symbol || '?', where: ' in Meteora', amount: Number(raw) / 10 ** d.decimals, price: d.price });
+      }
+      return legs;
+    }
+    // pump.fun: a token still on its bonding curve (its mint ends in "pump"; once it graduates it
+    // trades on PumpSwap and is priced like any other) counts at what selling it into the curve
+    // returns: constant product on the curve's virtual reserves, never more than the SOL the
+    // curve really holds, less pump.fun's 1.25% fee. -> { mint: SOL }
+    const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P', WSOL = 'So11111111111111111111111111111111111111112';
+    async function pumpCurves(tokens) {
+      const list = tokens.filter((t) => /pump$/.test(t.addr)).slice(0, 50), out = {};
+      if (!list.length) return out;
+      const seed = new TextEncoder().encode('bonding-curve');
+      const pdas = await Promise.all(list.map((t) => D.pda([seed, D.b58decode(t.addr)], PUMP)));
+      (await many(pdas, 'base64')).forEach((acc, i) => {
+        if (!acc || acc.owner !== PUMP || !acc.data) return;
+        const b = Uint8Array.from(atob(acc.data[0]), (ch) => ch.charCodeAt(0));
+        if (b.length < 49 || b[48]) return;                                   // complete: graduated
+        const v = new DataView(b.buffer), u64 = (o) => v.getBigUint64(o, true);
+        const vt = u64(8), vs = u64(16), rs = u64(32), amt = BigInt(Math.floor(list[i].amount * 1e6));   // pump.fun tokens: 6 decimals
+        let lamports = amt * vs / (vt + amt);
+        if (lamports > rs) lamports = rs;
+        out[list[i].addr] = Number(lamports * 9875n / 10000n) / 1e9;
+      });
+      return out;
+    }
     const jupQueue = serial(250);          // Jupiter's free tier allows a few calls a window
     const jup = (url) => jupQueue(() => D.fetchJSON(url));
-    async function sol(addr) {
+    async function sol(addr, opts) {
       // 1. amounts: every token account from Jupiter, else the biggest tokens' accounts
       let amounts = {}, partial = null;
       try {
@@ -681,12 +804,25 @@
         amounts = {};
         partial = 'token list did not answer; only major tokens checked';
         const atas = await Promise.all(SOL_TOP.map((t) => D.ata(addr, t[1], t[3] ? 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' : undefined)));
-        const r = await D.firstOk(D.solRpcs, (u) => D.rpc(u, 'getMultipleAccounts', [atas, { encoding: 'jsonParsed' }]));
+        const r = { value: await many(atas, 'jsonParsed') };
         (r.value || []).forEach((acc, i) => {
           const p = acc && acc.data && acc.data.parsed && acc.data.parsed.info;
           if (p && p.mint === SOL_TOP[i][1] && p.tokenAmount) amounts[p.mint] = Number(p.tokenAmount.uiAmount) || 0;
         });
       }
+      // liquidity positions: NFTs, which Jupiter's list leaves out, so the one public RPC that
+      // lists an owner's token accounts (the stake-search one) is asked for those
+      let lp = { legs: [], held: [] };
+      if (!opts || opts.positions !== false) try {
+        const nfts = [];
+        for (const prog of ['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb']) {
+          const r = await D.firstOk(D.solScanRpcs, (u) => D.rpc(u, 'getTokenAccountsByOwner', [addr, { programId: prog }, { encoding: 'jsonParsed' }]));
+          for (const a of r.value || []) { const i = a.account.data.parsed.info; if (i.tokenAmount.decimals === 0 && i.tokenAmount.amount === '1') nfts.push(i.mint); }
+        }
+        const [c, m] = await Promise.all([clmmPositions(nfts), dlmmPositions(addr)]);
+        lp = { legs: c.legs.concat(m), held: c.held };
+      } catch (e) { partial = partial || 'liquidity positions not checked'; }
+      for (const m of lp.held) delete amounts[m];
       const mints = Object.keys(amounts).filter((m) => amounts[m] > 0);
       const names = Object.fromEntries(SOL_TOP.map((t) => [t[1], t[0]]));
       const tokens = mints.map((m) => ({ addr: m, symbol: names[m] || '?', amount: amounts[m], price: null }));
@@ -704,7 +840,14 @@
       const rest = tokens.filter((t) => t.price == null).map((t) => t.addr).sort((a, b) => (b in names) - (a in names));
       const p = await llamaPrices('solana', rest);
       for (const t of tokens) { const v = p[lc(t.addr)]; if (t.price == null && v) { t.price = v.price; if (t.symbol === '?') t.symbol = v.symbol; } }
-      const r = await judge(tokens, new Set(SOL_TOP.map((t) => lc(t[1]))));
+      try {
+        const curve = await pumpCurves(tokens);
+        if (Object.keys(curve).length) {
+          const sol = (await llamaPrices('solana', [WSOL]))[lc(WSOL)];
+          for (const t of tokens) if (curve[t.addr] > 0 && sol && sol.price > 0) { t.price = curve[t.addr] * sol.price / t.amount; t.exact = true; delete t.liq; }
+        }
+      } catch (e) { /* curve tokens stay judged by their (thin) liquidity */ }
+      const r = await judge(tokens.concat(lp.legs), new Set(SOL_TOP.map((t) => lc(t[1]))));
       return { holdings: r.holdings, others: r.others.length, partial: partial || (r.unverified ? 'token values not cross-checked' : null) };
     }
 

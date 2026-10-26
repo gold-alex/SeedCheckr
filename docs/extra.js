@@ -479,7 +479,7 @@
           break;
         // ---- ed25519 ----
         case 0x50: case 0x51: { const a = base58(b);
-          add(type === 0x50 ? 'Solana (Ledger, Trust path)' : 'Solana (old Solflare path)', a, 'https://solscan.io/account/', () => K.checkSol(a)); break; }
+          add(type === 0x50 ? 'Solana (Ledger, Trust path)' : 'Solana (old Solflare path)', a, 'https://solscan.io/account/', () => K.checkSol(a, { extra: true })); break; }
         case 0x52: { const a = addr.stellar(b);
           add('Stellar', a, 'https://stellar.expert/explorer/public/account/', async () => {
             try {
@@ -546,9 +546,23 @@
             const j = await fetchJSON('https://tonapi.io/v2/pubkeys/' + pk + '/wallets');
             if (!Array.isArray(j.accounts)) throw new Error('unexpected answer');
             let n = 0n; for (const x of j.accounts) n += BigInt(x.balance || 0);
+            // tokens (jettons): only those on Tonkeeper's curated list count, at tonapi's price;
+            // the rest (airdropped fakes named USDT among them) are "other tokens"
+            const hs = [h('TON', units(n, 9), 'the-open-network')];
+            let others = 0, missed = false;
+            for (const acc of j.accounts.slice(0, 5)) {
+              let jt;
+              try { jt = await fetchJSON('https://tonapi.io/v2/accounts/' + acc.address + '/jettons?currencies=usd'); } catch (e) { missed = true; continue; }
+              for (const b of jt.balances || []) {
+                const amount = Number(b.balance) / 10 ** (b.jetton.decimals || 0), usd = Number(b.price && b.price.prices && b.price.prices.USD) || 0;
+                if (!(amount > 0)) continue;
+                if (b.jetton.verification === 'whitelist' && usd > 0) hs.push({ symbol: String(b.jetton.symbol || '?').slice(0, 16), amount, price: null, usdPrice: usd });
+                else others++;
+              }
+            }
             // The index only knows wallets that have sent at least once (deployed contracts), so
             // an empty answer is not proof of nothing: say so instead of claiming zero.
-            return { holdings: [h('TON', units(n, 9), 'the-open-network')], others: 0, partial: j.accounts.length ? null : 'a TON wallet that has only ever received may not show up here' };
+            return { holdings: hs, others, partial: [missed && 'tokens not checked', !j.accounts.length && 'a TON wallet that has only ever received may not show up here'].filter(Boolean).join('; ') || null };
           }); break; }
         case 0x60: { const pay = b.slice(0, 28), stake = b.slice(28, 56); const base = addr.cardanoBase(pay, stake), st = addr.cardanoStake(stake);
           add('Cardano', base, 'https://cardanoscan.io/stakekey/', async () => {
@@ -591,7 +605,7 @@
           if (b.length !== 128) break;
           for (let n = 1; n <= 4; n++) {
             const a = base58(b.slice(32 * (n - 1), 32 * n));
-            add('Solana account ' + (n + 1) + ' (Phantom, Solflare)', a, 'https://solscan.io/account/', () => K.checkSol(a), { account: true });
+            add('Solana account ' + (n + 1) + ' (Phantom, Solflare)', a, 'https://solscan.io/account/', () => K.checkSol(a, { extra: true }), { account: true });
           }
           break;
         }
