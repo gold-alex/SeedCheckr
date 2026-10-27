@@ -124,6 +124,8 @@
     ftm: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', one: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', scroll: '0x11fCfe756c05AD438e312a7fd934381537D3cFfe', gnosis: '0xb50201558B00496A145fE76f7424749556E326D8',
     metis: '0x90df02551bB792286e8D4f13E0e357b4Bf1D6a57', zksync: '0x78e30497a3c7527d953c6B1E3541b021A98Ac43c', celo: '0x3E59A31363E2ad014dcbc521c4a0d5757d9f3402', sonic: '0x5362dBb1e601abF3a4c14c22ffEdA64042E5eAA3',
     mantle: '0x458F293454fE0d67EC0655f3672301301DD51422', soneium: '0xDd3d7A7d03D9fD9ef45f3E587287922eF65CA38B', plasma: '0x925a2A7214Ed92428B5b1B090F80b25700095e12', ink: '0x2816cf15F6d2A220E789aA011D5EE4eB6c47FEbA' };
+  // Aave forks, checked the same way: [network, pool, name]
+  const AAVE_FORKS = [['hyperevm', '0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b', 'HyperLend']];
   // Uniswap-v3-style position managers (each checked on-chain): [name, address, slipstream].
   // Slipstream (Aerodrome, Velodrome) keys pools by tick spacing instead of fee.
   const UNI = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88', CAKE = '0x46A15B0b27311cedF172AB29E4f4766fbE7F4364';
@@ -605,23 +607,25 @@
     // often unpriced. A token counts as Aave's only if its POOL() is the network's Aave pool; it
     // is worth its underlying asset 1:1. -> { usd, unvalued, addrs }
     async function aave(c, url, tokens) {
-      const pool = AAVE[c.key];
-      const cands = pool ? tokens.filter((t) => /^(a[A-Z0-9]|variableDebt|stableDebt)/.test(t.symbol || '') && t.amount > 0).slice(0, 40) : [];
+      const pools = Object.fromEntries((AAVE[c.key] ? [[lc(AAVE[c.key]), 'Aave']] : []).concat(AAVE_FORKS.filter((f) => f.key === c.key || f[0] === c.key).map((f) => [lc(f[1]), f[2]])));
+      // deposit tokens are a... (Aave) or h... (HyperLend); debt tokens variableDebt.../stableDebt...; any
+      // case, since MetaMask's list upper-cases symbols (HHYPEREVMWHYPE): POOL() decides, not the name
+      const cands = Object.keys(pools).length ? tokens.filter((t) => /^([ah][a-z0-9]|variableDebt|stableDebt)/i.test(t.symbol || '') && t.amount > 0).slice(0, 40) : [];
       if (!cands.length) return null;
       const word = (h) => (/^0x[0-9a-fA-F]{64}/.test(h || '') ? '0x' + h.slice(26, 66).toLowerCase() : null);
       const found = (await Promise.all(cands.map(async (t) => {
         const [p, u] = await Promise.all([D.rpc(url, 'eth_call', [{ to: t.addr, data: '0x7535d246' }, 'latest']), D.rpc(url, 'eth_call', [{ to: t.addr, data: '0xb16a19de' }, 'latest'])]);
-        return word(p) === lc(pool) && word(u) ? Object.assign({ underlying: word(u), debt: /Debt/.test(t.symbol) }, t) : null;
+        return pools[word(p)] && word(u) ? Object.assign({ underlying: word(u), debt: /debt/i.test(t.symbol), name: pools[word(p)] }, t) : null;
       }).map((p) => p.catch(() => null)))).filter(Boolean);
       if (!found.length) return null;
       const px = await llamaPrices(LLAMA[c.key], [...new Set(found.map((x) => x.underlying))]);
-      let dep = 0, debt = 0, unvalued = false;
+      const by = {};   // per protocol: deposits less debt
       for (const x of found) {
-        const v = px[x.underlying];
-        if (!v || !(v.price > 0)) { unvalued = true; continue; }
-        if (x.debt) debt += x.amount * v.price; else dep += x.amount * v.price;
+        const o = by[x.name] = by[x.name] || { name: x.name, usd: 0, unvalued: false }, v = px[x.underlying];
+        if (!v || !(v.price > 0)) { o.unvalued = true; continue; }
+        o.usd += (x.debt ? -1 : 1) * x.amount * v.price;
       }
-      return { usd: dep - debt, unvalued, addrs: new Set(found.map((x) => lc(x.addr))) };
+      return { lines: Object.values(by), addrs: new Set(found.map((x) => lc(x.addr))) };
     }
 
     // Vault shares (ERC-4626: Euler, Fluid, Yearn, Spark, Morpho off its API's networks...) have no DEX
@@ -705,8 +709,10 @@
         t.others = t.others.filter(free);
       }
       if (av) {
-        if (av.unvalued) t.partial = [t.partial, 'Aave position not valued'].filter(Boolean).join('; ');
-        else t.holdings.push({ symbol: 'USD in Aave, after debt', amount: Math.max(0, av.usd), price: null, usdPrice: 1 });
+        for (const l of av.lines) {
+          if (l.unvalued) t.partial = [t.partial, l.name + ' position not valued'].filter(Boolean).join('; ');
+          else t.holdings.push({ symbol: 'USD in ' + l.name + ', after debt', amount: Math.max(0, l.usd), price: null, usdPrice: 1 });
+        }
         t.others = t.others.filter(free);
       }
       // debt held as a token and not already netted by a DeFi position: the tokens become one
