@@ -29,6 +29,11 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     # renders the real frames on the panel, films them like a phone camera, decodes with the page's jsQR path
     node verify_screen.js 24      # slow: a few minutes
 
+    # the page's on-chain readers and value rules against fixed, stubbed accounts (offline, a second):
+    # an Orca position beside an unpriced token, a pump.fun curve sale, Multicall3 decoding, one token
+    # held twice capped once. DOCS=/path/to/copy tests a modified copy of docs/
+    node verify_defi.js
+
     # the page against the live networks: runs docs/app.js unchanged with a stub DOM, prints the
     # verdict and case file, and checks every endpoint's CORS answer for a github.io origin
     node site_live.js demo      # a famous wallet, expects "are in possession"
