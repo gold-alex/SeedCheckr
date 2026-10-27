@@ -818,14 +818,14 @@
       const [t, d] = await Promise.all([tokenList(c, addr, url, known, opts), positions(c, addr, url, known).catch(() => null)]);
       const count = (xs) => new Set(xs.map(lc)).size;
       const covered = (a) => d && d.covered.has(lc(a));
-      const av = await aave(c, url, (t.all || []).filter((x) => !covered(x.addr))).catch(() => null);
-      // Morpho from its own API, in place of MetaMask's Morpho lines: MetaMask's adapter counts a
-      // vault share as one unit of the asset, but shares grow (889,528 steakUSDC were 1,019,047
-      // USDC on-chain, as Morpho's API says). MetaMask's lines stay only if Morpho's API fails.
-      const mo = Object.values(MORPHO).includes(c.key) ? await morpho(addr).then((m) => m[c.key] || null, () => 'failed') : null;
+      // Aave, Morpho and Pendle at once. Morpho from its own API, in place of MetaMask's Morpho lines:
+      // MetaMask's adapter counts a vault share as one unit of the asset, but shares grow (889,528
+      // steakUSDC were 1,019,047 USDC on-chain, as Morpho's API says); MetaMask's lines stay only if
+      // Morpho's API fails. The same for Pendle.
+      const [av, mo, pe] = await Promise.all([aave(c, url, (t.all || []).filter((x) => !covered(x.addr))).catch(() => null),
+        Object.values(MORPHO).includes(c.key) ? morpho(addr).then((m) => m[c.key] || null, () => 'failed') : null,
+        Object.values(PENDLE).includes(c.key) ? pendle(addr).then((m) => m[c.key] || 0, () => 'failed') : null]);
       if (d && mo !== 'failed' && Object.values(MORPHO).includes(c.key)) d.holdings = d.holdings.filter((x) => !/morpho/i.test(x.symbol));
-      // Pendle from its own API, in place of MetaMask's Pendle lines (kept only if Pendle's API fails)
-      const pe = Object.values(PENDLE).includes(c.key) ? await pendle(addr).then((m) => m[c.key] || 0, () => 'failed') : null;
       if (d && pe !== null && pe !== 'failed') d.holdings = d.holdings.filter((x) => !/pendle/i.test(x.symbol));
       if (pe === 'failed') t.partial = [t.partial, 'Pendle not checked'].filter(Boolean).join('; ');
       else if (pe > 0) t.holdings.push({ symbol: 'USD in Pendle', amount: pe, price: null, usdPrice: 1 });
@@ -833,14 +833,14 @@
       if (pe !== null && pe !== 'failed') t.holdings = t.holdings.filter((x) => !(x.addr && /^(PT|YT|SY)-|^PENDLE-LPT/i.test(x.symbol)));
       const taken = (a) => covered(a) || (av && av.addrs.has(lc(a))) || (mo && mo.vaults && mo.vaults.has(lc(a)));
       // priced tokens the liquidity check dropped: vault shares, if the vault agrees with the price
+      // and Symbiotic vaults among the tokens nothing counted (Ethereum), both at once
       const counted = new Set(t.holdings.map((x) => lc(x.addr)));
-      const vs = await vaults(c, url, (t.all || []).filter((x) => x.price > 0 && x.amount * x.price >= 10 && !counted.has(lc(x.addr)) && !taken(x.addr)).sort((p, q) => q.amount * q.price - p.amount * p.price)).catch(() => []);
+      const rest = (t.all || []).filter((x) => !counted.has(lc(x.addr)) && !taken(x.addr));
+      const [vs, sy] = await Promise.all([vaults(c, url, rest.filter((x) => x.price > 0 && x.amount * x.price >= 10).sort((p, q) => q.amount * q.price - p.amount * p.price)).catch(() => []),
+        c.key === 'eth' ? symbiotic(url, rest.filter((x) => x.amount > 0).slice(0, 300), addr.slice(2).toLowerCase().padStart(64, '0'), known).catch(() => null) : null]);
       for (const v of vs) t.holdings.push({ symbol: sym(v.symbol), amount: v.amount, price: null, usdPrice: v.usd / v.amount, addr: v.addr });
-      // Symbiotic vaults among the tokens nothing counted (Ethereum)
-      if (c.key === 'eth') {
-        const counted2 = new Set(t.holdings.map((x) => lc(x.addr)));
-        const sy = await symbiotic(url, (t.all || []).filter((x) => x.amount > 0 && !counted2.has(lc(x.addr)) && !taken(x.addr)).slice(0, 300), addr.slice(2).toLowerCase().padStart(64, '0'), known).catch(() => null);
-        if (sy) {
+      {
+        if (sy && !vs.some((v) => sy.addrs.has(lc(v.addr)))) {   // a token both checks took is the vault's
           t.holdings.push(...sy.holdings);
           if (sy.unvalued) t.partial = [t.partial, 'Symbiotic stake not valued'].filter(Boolean).join('; ');
         }
