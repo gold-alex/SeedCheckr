@@ -118,6 +118,9 @@
   // Morpho's API networks (chain id -> network key); its other networks are not on this page
   const MORPHO = { 1: 'eth', 8453: 'base', 747474: 'katana', 999: 'hyperevm', 42161: 'arb', 137: 'polygon', 130: 'uni', 10: 'op', 480: 'world', 143: 'monad', 4663: 'hood' };
   const MORPHO_API = 'https://blue-api.morpho.org/graphql';
+  // Pendle's networks (chain id -> network key)
+  const PENDLE = { 1: 'eth', 56: 'bsc', 143: 'monad', 196: 'xlayer', 999: 'hyperevm', 4663: 'hood', 8453: 'base', 9745: 'plasma', 42161: 'arb', 10: 'op', 146: 'sonic', 5000: 'mantle', 80094: 'bera' };
+  const PENDLE_API = 'https://api-v2.pendle.finance/core/v1/dashboard/positions/database/';
   // Aave v3 pools, each checked live (it lists reserves; its first aToken's POOL() points back)
   const AAVE = { eth: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2', base: '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5', bsc: '0x6807dc923806fE8Fd134338EABCA509979a7e0cB', linea: '0xc47b8C00b0f69a36fa203Ffeac0334874574a8Ac',
     arb: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', op: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', polygon: '0x794a61358D6845594F94dc1DB02A252b5b4814aD', avax: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
@@ -709,9 +712,36 @@
       });
     }
 
+    // Pendle: PT, YT and LP positions at Pendle's own valuation, one call for every network. Its PTs
+    // have no DEX pool the liquidity check knows, and MetaMask reports them in SY wrappers nothing
+    // prices, so a $74.5k PT-stETH position counted as nothing. -> { networkKey: usd }
+    const pendleMemo = new Map();
+    const pendle = (addr) => {
+      const k = lc(addr);
+      if (!pendleMemo.has(k)) pendleMemo.set(k, pendleAll(addr).catch((e) => { pendleMemo.delete(k); throw e; }));
+      return pendleMemo.get(k);
+    };
+    async function pendleAll(addr) {
+      const j = await D.fetchJSON(PENDLE_API + addr);
+      if (!j || !Array.isArray(j.positions)) throw new Error('unexpected answer');
+      const out = {}, v = (x) => Number(x && x.valuation) || 0;
+      for (const p of j.positions) {
+        const k = PENDLE[p.chainId];
+        if (!k) continue;
+        let usd = 0;
+        for (const o of p.openPositions || []) usd += v(o.pt) + v(o.yt) + v(o.lp) + (o.crossPtPositions || []).reduce((s, x) => s + v(x), 0);
+        for (const o of p.syPositions || []) usd += v(o) + v(o.sy);
+        out[k] = (out[k] || 0) + usd;
+      }
+      return out;
+    }
+
     // ---- EVM: every token of `addr` on network c; url = an RPC that answered ----
     async function evm(c, addr, url, opts) {
       const known = new Set((TOP[c.key] || []).map((t) => lc(t[1])).concat(c.tokens.map((t) => lc(t.addr)), NATIVE));
+      // Morpho's and Pendle's one call per wallet go out now, alongside the token list
+      if (Object.values(MORPHO).includes(c.key)) morpho(addr).catch(() => {});
+      if (Object.values(PENDLE).includes(c.key)) pendle(addr).catch(() => {});
       const [t, d] = await Promise.all([tokenList(c, addr, url, known, opts), positions(c, addr, url, known).catch(() => null)]);
       const count = (xs) => new Set(xs.map(lc)).size;
       const covered = (a) => d && d.covered.has(lc(a));
@@ -721,6 +751,13 @@
       // USDC on-chain, as Morpho's API says). MetaMask's lines stay only if Morpho's API fails.
       const mo = Object.values(MORPHO).includes(c.key) ? await morpho(addr).then((m) => m[c.key] || null, () => 'failed') : null;
       if (d && mo !== 'failed' && Object.values(MORPHO).includes(c.key)) d.holdings = d.holdings.filter((x) => !/morpho/i.test(x.symbol));
+      // Pendle from its own API, in place of MetaMask's Pendle lines (kept only if Pendle's API fails)
+      const pe = Object.values(PENDLE).includes(c.key) ? await pendle(addr).then((m) => m[c.key] || 0, () => 'failed') : null;
+      if (d && pe !== null && pe !== 'failed') d.holdings = d.holdings.filter((x) => !/pendle/i.test(x.symbol));
+      if (pe === 'failed') t.partial = [t.partial, 'Pendle not checked'].filter(Boolean).join('; ');
+      else if (pe > 0) t.holdings.push({ symbol: 'USD in Pendle', amount: pe, price: null, usdPrice: 1 });
+      // Pendle's own tokens are counted above, never again from the token list
+      if (pe !== null && pe !== 'failed') t.holdings = t.holdings.filter((x) => !(x.addr && /^(PT|YT|SY)-|^PENDLE-LPT/i.test(x.symbol)));
       const taken = (a) => covered(a) || (av && av.addrs.has(lc(a))) || (mo && mo.vaults && mo.vaults.has(lc(a)));
       // priced tokens the liquidity check dropped: vault shares, if the vault agrees with the price
       const counted = new Set(t.holdings.map((x) => lc(x.addr)));
