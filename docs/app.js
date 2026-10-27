@@ -422,6 +422,46 @@
     const gaps = [failed && failed + ' of ' + EVM.length + ' networks did not answer', partly.length && partly.length + ' only partly checked (' + partly.slice(0, 3).join('; ') + (partly.length > 3 ? '; ...' : '') + ')'].filter(Boolean);
     return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others, partial: gaps.length ? gaps.join(', ') : null, note: 'all ' + EVM.length + ' EVM networks checked' };
   }
+  // Smart accounts this wallet owns on Ethereum hold their positions at their own address: an
+  // Instadapp account (DSA; Instadapp's list links owners to accounts, the account's isAuth()
+  // confirms) and a DSProxy (Maker, DeFi Saver, Summer.fi; the registry names it, its owner()
+  // confirms). Each is checked like the wallet itself. A wallet whose Spark position
+  // (104,276 wstETH less 79.7M DAI, $223M net) sits in its Instadapp account was $223M short.
+  const INSTA_LIST = '0x4c8a1BEb8a87765788946D6B19C6C6355194AbEb', DS_PROXY_REGISTRY = '0x4678f0a6958e4D2Bc4F1BAF7Bc52E8F3564f3fE4';
+  async function ownedAccounts(addr) {
+    const eth = EVM.find((c) => c.key === 'eth'), word = (n) => n.toString(16).padStart(64, '0'), who = addr.slice(2).toLowerCase().padStart(64, '0');
+    const call = (to, data) => firstOk(eth.rpcs, (u) => rpc(u, 'eth_call', [{ to, data }, 'latest']));
+    const words = (h) => ((h || '').slice(2).match(/.{64}/g) || []).map((x) => BigInt('0x' + x));
+    const asAddr = (n) => '0x' + n.toString(16).padStart(40, '0');
+    const out = [];
+    // Instadapp: userLink(owner) -> (first, last, count); accountAddr(id); userList(owner, id) -> (prev, next)
+    const [first, , count] = words(await call(INSTA_LIST, '0xf227a99f' + who));
+    for (let id = first, i = 0; id && i < Math.min(Number(count || 0), 5); i++) {
+      const a = asAddr(words(await call(INSTA_LIST, '0x60330d79' + word(id)))[0] || 0n);
+      if (words(await call(a, '0x2520e7ff' + who))[0] === 1n) out.push({ kind: 'Instadapp account', address: a });
+      id = (words(await call(INSTA_LIST, '0x748e6e18' + who + word(id)))[1]) || 0n;
+    }
+    const proxy = asAddr(words(await call(DS_PROXY_REGISTRY, '0xc4552791' + who))[0] || 0n);
+    if (!/^0x0+$/.test(proxy) && asAddr(words(await call(proxy, '0x8da5cb5b'))[0] || 0n) === addr.toLowerCase()) out.push({ kind: 'DSProxy', address: proxy });
+    return out;
+  }
+  async function checkOwnedAccounts(addr) {
+    const accts = await ownedAccounts(addr);
+    if (!accts.length) return { holdings: [h('ETH', 0, 'ethereum')], others: 0, partial: null, note: 'no Instadapp account or DSProxy' };
+    const eth = EVM.find((c) => c.key === 'eth');
+    const rs = await Promise.allSettled(accts.map((a) => checkEvm(eth, a.address)));
+    const holdings = [], gaps = [];
+    let others = 0;
+    rs.forEach((r, i) => {
+      const tag = ' (' + accts[i].kind + ' ' + accts[i].address.slice(0, 8) + '…)';
+      if (r.status !== 'fulfilled') { gaps.push(accts[i].kind + ' did not answer'); return; }
+      for (const x of r.value.holdings) if (x.amount > 0) holdings.push(Object.assign({}, x, { symbol: x.symbol + tag }));
+      others += r.value.others || 0;
+      if (r.value.partial) gaps.push(accts[i].kind + ': ' + r.value.partial);
+    });
+    if (rs.every((r) => r.status !== 'fulfilled')) throw new Error('no account answered');
+    return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others, partial: gaps.join('; ') || null, note: accts.map((a) => a.kind + ' ' + a.address).join(', ') };
+  }
   async function checkMempoolStyle(base, addr, symbol, price) {
     const j = await fetchJSON(base + addr);
     const c = j.chain_stats, m = j.mempool_stats;
@@ -796,6 +836,7 @@
     list.push({ name: 'eCash (2020 fork)', addr: xec, explorer: 'https://explorer.e.cash/address/', run: () => checkXec(a.btcLegacy) });
     for (const c of EVM) list.push({ name: c.name, addr: a.evm, explorer: c.explorer, run: () => checkEvm(c, a.evm) });
     list.push({ name: 'Hyperliquid', addr: a.evm, explorer: 'https://app.hyperliquid.xyz/explorer/address/', run: () => checkHyperliquid(a.evm) });
+    list.push({ name: 'Smart accounts you own (Instadapp, DSProxy)', addr: a.evm, explorer: 'https://debank.com/profile/', run: () => checkOwnedAccounts(a.evm) });
     list.push({ name: 'Solana', addr: a.sol, explorer: 'https://solscan.io/account/', run: () => checkSol(a.sol) });
     list.push({ name: 'Eclipse', addr: a.sol, explorer: 'https://eclipsescan.xyz/account/', run: () => checkEclipse(a.sol) });
     list.push({ name: 'Tron', addr: a.trx, explorer: 'https://tronscan.org/#/address/', run: () => checkTrx(a.trx) });
