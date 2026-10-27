@@ -129,6 +129,9 @@
     mantle: '0x458F293454fE0d67EC0655f3672301301DD51422', soneium: '0xDd3d7A7d03D9fD9ef45f3E587287922eF65CA38B', plasma: '0x925a2A7214Ed92428B5b1B090F80b25700095e12', ink: '0x2816cf15F6d2A220E789aA011D5EE4eB6c47FEbA' };
   // Aave forks, checked the same way: [network, pool, name]
   const AAVE_FORKS = [['hyperevm', '0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b', 'HyperLend'], ['gnosis', '0xFb9b496519fCa8473fBa1af0850B6B8F476BFdB3', 'RealT RMM']];
+  // ERC-4626 vaults DefiLlama does not price, trusted when a known factory says it deployed them
+  // (deployedVaults(vault)): [network, factory, name]. Each found as a vault's creator, checked live.
+  const VAULT_FACTORIES = [['op', '0xF0F151494658baE060034c8f4f199F74910ea806', 'PoolTogether'], ['op', '0xec9f59bD06465b105e719c0b0483A4Ed6A656775', 'PoolTogether']];
   // Compound v2 forks: [network, comptroller, name, wrapped native coin (the one market with no underlying())]
   const COMPOUND = [['bsc', '0xfD36E2c2a6789Db23113685031d7F16329158384', 'Venus', '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c']];
   // stakes outside the markets that belong to the same protocol: [network, name, vault, staked token]
@@ -741,6 +744,30 @@
       }) };
     }
 
+    // Vaults from a known factory: deployedVaults(token) on each factory for the tokens nothing
+    // counted (one Multicall3 call), then balance and asset, then convertToAssets(balance); the
+    // asset is valued like any token (liquidity check included). -> { holdings, addrs }
+    async function factoryVaults(c, url, cands, owner, known) {
+      const fs = VAULT_FACTORIES.filter((f) => f[0] === c.key);
+      if (!fs.length || !cands.length) return null;
+      const pad = (a) => a.slice(2).toLowerCase().padStart(64, '0'), yes = (r) => r && r.status === 'fulfilled' && /^0x0*1$/.test(r.value);
+      const q = await multi(url, fs.flatMap((f) => cands.map((t) => ({ to: f[1], data: '0xfaf20d11' + pad(t.addr) }))));
+      const hits = [];
+      cands.forEach((t, i) => { const f = fs.find((_, k) => yes(q[k * cands.length + i])); if (f) hits.push({ t, name: f[2] }); });
+      if (!hits.length) return null;
+      const one = await multi(url, hits.flatMap((x) => [{ to: x.t.addr, data: '0x70a08231' + owner }, { to: x.t.addr, data: '0x38d52e0f' }]));
+      const two = await multi(url, hits.map((x, i) => ({ to: x.t.addr, data: '0x07a2d13a' + ((one[2 * i] && one[2 * i].value) || '0x').slice(2).padStart(64, '0').slice(-64) })));
+      const got = hits.map((x, i) => {
+        const a = one[2 * i + 1], v = two[i];
+        if (!a || a.status !== 'fulfilled' || !v || v.status !== 'fulfilled' || a.value.length < 66 || v.value.length < 66) return null;
+        return { name: x.name, asset: '0x' + a.value.slice(26, 66), raw: BigInt(v.value.slice(0, 66)) };
+      }).filter((x) => x && x.raw > 0n);
+      const px = got.length ? await llamaPrices(LLAMA[c.key], [...new Set(got.map((x) => x.asset))]) : {};
+      const tokens = got.map((x) => { const p = px[lc(x.asset)]; return p && p.decimals >= 0 ? { addr: x.asset, symbol: p.symbol, where: ' in ' + x.name, amount: Number(x.raw) / 10 ** p.decimals, price: p.price } : null; }).filter(Boolean);
+      const r = tokens.length ? await judge(tokens, known) : { holdings: [] };
+      return { holdings: r.holdings, addrs: new Set(hits.map((x) => lc(x.t.addr))), unvalued: got.length > tokens.length };
+    }
+
     // Symbiotic restaking vaults (Ethereum): a held token counts as one when Symbiotic's VaultFactory
     // says isEntity; the stake is activeBalanceOf(owner) in the vault's collateral(), which is then
     // valued like any other token (liquidity check included). Not ERC-4626, so the vault check above
@@ -884,8 +911,14 @@
       // and Symbiotic vaults among the tokens nothing counted (Ethereum), both at once
       const counted = new Set(t.holdings.map((x) => lc(x.addr)));
       const rest = (t.all || []).filter((x) => !counted.has(lc(x.addr)) && !taken(x.addr));
-      const [vs, sy] = await Promise.all([vaults(c, url, rest.filter((x) => x.price > 0 && x.amount * x.price >= 10).sort((p, q) => q.amount * q.price - p.amount * p.price)).catch(() => []),
-        c.key === 'eth' ? symbiotic(url, rest.filter((x) => x.amount > 0).slice(0, 300), addr.slice(2).toLowerCase().padStart(64, '0'), known).catch(() => null) : null]);
+      const own = addr.slice(2).toLowerCase().padStart(64, '0');
+      const [vs, sy, fv] = await Promise.all([vaults(c, url, rest.filter((x) => x.price > 0 && x.amount * x.price >= 10).sort((p, q) => q.amount * q.price - p.amount * p.price)).catch(() => []),
+        c.key === 'eth' ? symbiotic(url, rest.filter((x) => x.amount > 0).slice(0, 300), own, known).catch(() => null) : null,
+        factoryVaults(c, url, rest.filter((x) => x.amount > 0 && !(x.price > 0)).slice(0, 200), own, known).catch(() => null)]);
+      if (fv && !vs.some((v) => fv.addrs.has(lc(v.addr)))) {
+        t.holdings.push(...fv.holdings);
+        if (fv.unvalued) t.partial = [t.partial, 'a vault not valued'].filter(Boolean).join('; ');
+      }
       for (const v of vs) t.holdings.push({ symbol: sym(v.symbol), amount: v.amount, price: null, usdPrice: v.usd / v.amount, addr: v.addr });
       {
         if (sy && !vs.some((v) => sy.addrs.has(lc(v.addr)))) {   // a token both checks took is the vault's
