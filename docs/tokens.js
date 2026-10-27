@@ -128,7 +128,11 @@
     metis: '0x90df02551bB792286e8D4f13E0e357b4Bf1D6a57', zksync: '0x78e30497a3c7527d953c6B1E3541b021A98Ac43c', celo: '0x3E59A31363E2ad014dcbc521c4a0d5757d9f3402', sonic: '0x5362dBb1e601abF3a4c14c22ffEdA64042E5eAA3',
     mantle: '0x458F293454fE0d67EC0655f3672301301DD51422', soneium: '0xDd3d7A7d03D9fD9ef45f3E587287922eF65CA38B', plasma: '0x925a2A7214Ed92428B5b1B090F80b25700095e12', ink: '0x2816cf15F6d2A220E789aA011D5EE4eB6c47FEbA' };
   // Aave forks, checked the same way: [network, pool, name]
-  const AAVE_FORKS = [['hyperevm', '0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b', 'HyperLend']];
+  const AAVE_FORKS = [['hyperevm', '0x00A89d7a5A02160f20150EbEA7a2b5E4879A1A8b', 'HyperLend'], ['gnosis', '0xFb9b496519fCa8473fBa1af0850B6B8F476BFdB3', 'RealT RMM']];
+  // Compound v2 forks: [network, comptroller, name, wrapped native coin (the one market with no underlying())]
+  const COMPOUND = [['bsc', '0xfD36E2c2a6789Db23113685031d7F16329158384', 'Venus', '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c']];
+  // stakes outside the markets that belong to the same protocol: [network, name, vault, staked token]
+  const COMPOUND_VAULTS = [['bsc', 'Venus', '0x0667Eed0a0aAb930af74a3dfedD263A73994f216', '0x4BD17003473389A42DAf6a0a729f6Fdb328BbBd7']];   // VAI vault: userInfo(owner).amount VAI
   // Uniswap-v3-style position managers (each checked on-chain): [name, address, slipstream].
   // Slipstream (Aerodrome, Velodrome) keys pools by tick spacing instead of fee.
   const UNI = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88', CAKE = '0x46A15B0b27311cedF172AB29E4f4766fbE7F4364';
@@ -702,6 +706,41 @@
       return out;
     }
 
+    // Compound v2 forks (Venus): every market of the comptroller in one Multicall3 call (balance,
+    // borrow, exchange rate, underlying), supply less borrow at the underlying's DefiLlama price.
+    // vTokens have no DEX pool, so the liquidity check would drop them. -> { lines, addrs }
+    async function compound(c, url, addr) {
+      const list = COMPOUND.filter((x) => x[0] === c.key), vaultsHere = COMPOUND_VAULTS.filter((x) => x[0] === c.key);
+      if (!list.length && !vaultsHere.length) return null;
+      const own = addr.slice(2).toLowerCase().padStart(64, '0'), word = (h, i) => BigInt('0x' + ((h || '').slice(2 + 64 * i, 66 + 64 * i) || '0'));
+      const lines = [], addrs = new Set();
+      for (const [, comptroller, name, wnative] of list) {
+        const all = await D.rpc(url, 'eth_call', [{ to: comptroller, data: '0xb0772d0b' }, 'latest']);   // getAllMarkets()
+        const n = Number(word(all, 1)), markets = Array.from({ length: Math.min(n, 120) }, (_, i) => '0x' + all.slice(2 + 64 * (2 + i) + 24, 2 + 64 * (3 + i)));
+        if (!markets.length) throw new Error('no markets');
+        const rs = await multi(url, markets.flatMap((m) => [{ to: m, data: '0x70a08231' + own }, { to: m, data: '0x95dd9193' + own }, { to: m, data: '0x182df0f5' }, { to: m, data: '0x6f307dc3' }]));
+        const pos = [];
+        markets.forEach((m, i) => {
+          addrs.add(lc(m));
+          const [b, d, x, u] = rs.slice(4 * i, 4 * i + 4), val = (r) => (r && r.status === 'fulfilled' && r.value.length >= 66 ? BigInt(r.value.slice(0, 66)) : 0n);
+          const supply = val(b) * val(x) / 10n ** 18n, borrow = val(d);
+          if (supply > 0n || borrow > 0n) pos.push({ underlying: u && u.status === 'fulfilled' && u.value.length >= 66 ? '0x' + u.value.slice(26, 66) : lc(wnative), supply, borrow });
+        });
+        lines.push({ name, pos });
+      }
+      for (const [, name, vault, token] of vaultsHere) {
+        const r = await D.rpc(url, 'eth_call', [{ to: vault, data: '0x1959a002' + own }, 'latest']).catch(() => null);   // userInfo(owner)
+        const amount = r ? word(r, 0) : 0n;
+        if (amount > 0n) { let l = lines.find((x) => x.name === name); if (!l) lines.push(l = { name, pos: [] }); l.pos.push({ underlying: lc(token), supply: amount, borrow: 0n }); }
+      }
+      const px = await llamaPrices(LLAMA[c.key], [...new Set(lines.flatMap((l) => l.pos.map((p) => p.underlying)))]);
+      return { addrs, lines: lines.filter((l) => l.pos.length).map((l) => {
+        let usd = 0, unvalued = false;
+        for (const p of l.pos) { const q = px[lc(p.underlying)]; if (!q || !(q.price > 0) || !(q.decimals >= 0)) { unvalued = true; continue; } usd += (Number(p.supply) - Number(p.borrow)) / 10 ** q.decimals * q.price; }
+        return { name: l.name, usd, unvalued };
+      }) };
+    }
+
     // Symbiotic restaking vaults (Ethereum): a held token counts as one when Symbiotic's VaultFactory
     // says isEntity; the stake is activeBalanceOf(owner) in the vault's collateral(), which is then
     // valued like any other token (liquidity check included). Not ERC-4626, so the vault check above
@@ -822,16 +861,25 @@
       // MetaMask's adapter counts a vault share as one unit of the asset, but shares grow (889,528
       // steakUSDC were 1,019,047 USDC on-chain, as Morpho's API says); MetaMask's lines stay only if
       // Morpho's API fails. The same for Pendle.
-      const [av, mo, pe] = await Promise.all([aave(c, url, (t.all || []).filter((x) => !covered(x.addr))).catch(() => null),
+      const [av, mo, pe, cp] = await Promise.all([aave(c, url, (t.all || []).filter((x) => !covered(x.addr))).catch(() => null),
         Object.values(MORPHO).includes(c.key) ? morpho(addr).then((m) => m[c.key] || null, () => 'failed') : null,
-        Object.values(PENDLE).includes(c.key) ? pendle(addr).then((m) => m[c.key] || 0, () => 'failed') : null]);
+        Object.values(PENDLE).includes(c.key) ? pendle(addr).then((m) => m[c.key] || 0, () => 'failed') : null,
+        compound(c, url, addr).catch(() => 'failed')]);
+      // Compound forks read on-chain replace MetaMask's lines for the same protocol
+      if (cp && cp !== 'failed') {
+        if (d) d.holdings = d.holdings.filter((x) => !cp.lines.some((l) => x.symbol.includes(l.name)));
+        for (const l of cp.lines) {
+          if (l.unvalued) t.partial = [t.partial, l.name + ' position not valued'].filter(Boolean).join('; ');
+          else if (l.usd > 0) t.holdings.push({ symbol: 'USD in ' + l.name + ', after debt', amount: l.usd, price: null, usdPrice: 1 });
+        }
+      } else if (cp === 'failed') t.partial = [t.partial, COMPOUND.filter((x) => x[0] === c.key).map((x) => x[2]).join(', ') + ' not checked'].filter(Boolean).join('; ');
       if (d && mo !== 'failed' && Object.values(MORPHO).includes(c.key)) d.holdings = d.holdings.filter((x) => !/morpho/i.test(x.symbol));
       if (d && pe !== null && pe !== 'failed') d.holdings = d.holdings.filter((x) => !/pendle/i.test(x.symbol));
       if (pe === 'failed') t.partial = [t.partial, 'Pendle not checked'].filter(Boolean).join('; ');
       else if (pe > 0) t.holdings.push({ symbol: 'USD in Pendle', amount: pe, price: null, usdPrice: 1 });
       // Pendle's own tokens are counted above, never again from the token list
       if (pe !== null && pe !== 'failed') t.holdings = t.holdings.filter((x) => !(x.addr && /^(PT|YT|SY)-|^PENDLE-LPT/i.test(x.symbol)));
-      const taken = (a) => covered(a) || (av && av.addrs.has(lc(a))) || (mo && mo.vaults && mo.vaults.has(lc(a)));
+      const taken = (a) => covered(a) || (av && av.addrs.has(lc(a))) || (mo && mo.vaults && mo.vaults.has(lc(a))) || (cp && cp.addrs && cp.addrs.has(lc(a)));
       // priced tokens the liquidity check dropped: vault shares, if the vault agrees with the price
       // and Symbiotic vaults among the tokens nothing counted (Ethereum), both at once
       const counted = new Set(t.holdings.map((x) => lc(x.addr)));
@@ -904,6 +952,20 @@
             const cv = await curveValues(url, onCurve).catch(() => ({ cut: true }));
             if (cv.cut) dx.cut = true;
             for (const t of tokens) { const usd = cv[lc(t.addr)]; if (t.price == null && usd > 0) { t.price = usd / t.amount; t.exact = true; } }
+          }
+          // indexers can be stale (an explorer still listed $9.9k of USDT and USDC a wallet had moved
+          // out): the 40 tokens worth most are read again on-chain, balance and decimals in one
+          // Multicall3 call, and the chain's figure is the one that counts
+          const worth = tokens.filter((t) => t.price != null && t.amount * Math.abs(t.price) >= 1).sort((a, b) => b.amount * Math.abs(b.price) - a.amount * Math.abs(a.price)).slice(0, 40);
+          if (worth.length) {
+            const own = addr.slice(2).toLowerCase().padStart(64, '0');
+            const rs = await multi(url, worth.flatMap((t) => [{ to: t.addr, data: '0x70a08231' + own }, { to: t.addr, data: '0x313ce567' }])).catch(() => []);
+            worth.forEach((t, i) => {
+              const b = rs[2 * i], d = rs[2 * i + 1];
+              if (!b || !d || b.status !== 'fulfilled' || d.status !== 'fulfilled' || !/^0x[0-9a-fA-F]{64}$/.test(b.value) || !/^0x[0-9a-fA-F]{64}$/.test(d.value)) return;   // keep the listed figure
+              const dec = Number(BigInt(d.value));
+              if (dec <= 36) t.amount = D.units(BigInt(b.value), dec);
+            });
           }
           // debt tokens (Aave's variableDebt..., which DefiLlama prices below zero): what is owed
           const debts = tokens.filter((t) => t.price < 0).map((t) => ({ addr: t.addr, usd: t.amount * -t.price }));
