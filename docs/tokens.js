@@ -684,6 +684,31 @@
       return out;
     }
 
+    // balanceOf(owner) on many tokens in one eth_call through Multicall3 (deployed at the same
+    // address on nearly every EVM network): small networks' RPCs refuse a burst of twenty calls.
+    // Where it is missing or fails, one call per token. -> [{ status, value }] like allSettled
+    const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
+    async function balances(url, tokens, owner) {
+      const each = () => Promise.allSettled(tokens.map((a) => D.rpc(url, 'eth_call', [{ to: a, data: '0x70a08231' + owner }, 'latest'])));
+      if (tokens.length < 2) return each();
+      const w = (n) => n.toString(16).padStart(64, '0'), n = tokens.length;
+      // aggregate3((address target, bool allowFailure, bytes callData)[]): each tuple is 6 words
+      let data = '0x82ad56cb' + w(32) + w(n);
+      for (let i = 0; i < n; i++) data += w(n * 32 + i * 192);
+      for (const a of tokens) data += a.slice(2).toLowerCase().padStart(64, '0') + w(1) + w(96) + w(36) + '70a08231' + owner + '0'.repeat(56);
+      let r;
+      try { r = await D.rpc(url, 'eth_call', [{ to: MULTICALL3, data }, 'latest']); } catch (e) { return each(); }
+      if (!/^0x[0-9a-fA-F]*$/.test(r || '') || r.length < 2 + 64 * (2 + n)) return each();   // no Multicall3 here
+      const word = (pos) => BigInt('0x' + r.slice(2 + pos * 2, 2 + pos * 2 + 64));
+      const base = Number(word(0)) + 32;                     // start of the array's offsets
+      return tokens.map((_, i) => {
+        const at = base + Number(word(base + 32 * i));      // this result tuple
+        const ok = word(at) === 1n, off = at + Number(word(at + 32)), len = Number(word(off));
+        if (!ok || len !== 32) return { status: 'rejected' };   // not a token, or it reverted
+        return { status: 'fulfilled', value: '0x' + r.slice(2 + (off + 32) * 2, 2 + (off + 64) * 2) };
+      });
+    }
+
     // ---- EVM: every token of `addr` on network c; url = an RPC that answered ----
     async function evm(c, addr, url, opts) {
       const known = new Set((TOP[c.key] || []).map((t) => lc(t[1])).concat(c.tokens.map((t) => lc(t.addr)), NATIVE));
@@ -772,7 +797,7 @@
       const list = c.tokens.map((t) => ({ symbol: t.symbol, addr: t.addr, dec: t.dec, cg: t.price }));
       for (const [symbol, a, dec] of TOP[c.key] || []) if (!list.some((t) => lc(t.addr) === lc(a))) list.push({ symbol, addr: a, dec });
       const owner = addr.slice(2).toLowerCase().padStart(64, '0');
-      const res = await Promise.allSettled(list.map((t) => D.rpc(url, 'eth_call', [{ to: t.addr, data: '0x70a08231' + owner }, 'latest'])));
+      const res = await balances(url, list.map((t) => t.addr), owner);
       const holdings = [], toPrice = [];
       let failed = 0;
       res.forEach((r, i) => {
