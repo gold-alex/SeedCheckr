@@ -282,6 +282,7 @@
   const VERIFY = 20;      // tokens checked against DEX liquidity, most valuable first
   const MIN_LIQ = 20000;  // USD in pools below which an unlisted token is airdrop bait, not money
   const PAGES = 4;        // token-list pages read per address (a spammed wallet can list thousands)
+  const LIST_MS = 10000;  // an explorer's token list that has not answered in 10 s gives way to the next source or the network's own list
   const PRICED = 400;     // unpriced tokens sent to DefiLlama, 80 per request
   const DEX_MAX = 90;     // tokens per network DefiLlama could not price that are looked up on DexScreener, 30 per request
   const DEX_CALLS = 90;   // DexScreener price lookups per minute: it allows 300, and its liquidity checks need the rest
@@ -330,7 +331,7 @@
         const out = [];
         let next = '/v2/network/mainnet/evm/' + id + '/address/' + a + '/erc20-holdings?limit=100';
         for (let page = 0; next && page < PAGES; page++) {
-          const j = await D.fetchJSON('https://api.routescan.io' + next);
+          const j = await D.fetchJSON('https://api.routescan.io' + next, undefined, LIST_MS);
           if (!Array.isArray(j.items)) throw new Error('unexpected answer');
           for (const x of j.items) out.push({ addr: x.tokenAddress, symbol: x.tokenSymbol, dec: +x.tokenDecimals, raw: x.tokenQuantity, price: num(x.tokenPrice) });
           next = j.link && j.link.next;
@@ -342,7 +343,7 @@
         const out = [];
         let query = '';
         for (let page = 0; query !== null && page < PAGES; page++) {
-          const j = await empty404(D.fetchJSON(host + '/api/v2/addresses/' + a + '/tokens?type=ERC-20' + query));
+          const j = await empty404(D.fetchJSON(host + '/api/v2/addresses/' + a + '/tokens?type=ERC-20' + query, undefined, LIST_MS));
           if (j === null) break;                       // an address the explorer never saw
           if (!Array.isArray(j.items)) throw new Error('unexpected answer');
           for (const x of j.items) out.push({ addr: x.token.address_hash || x.token.address, symbol: x.token.symbol, dec: +x.token.decimals, raw: x.value, price: num(x.token.exchange_rate) });
@@ -352,7 +353,7 @@
         return out;
       },
       es: async (host, a) => {
-        const j = await D.fetchJSON(host + '/api?module=account&action=tokenlist&address=' + a);
+        const j = await D.fetchJSON(host + '/api?module=account&action=tokenlist&address=' + a, undefined, LIST_MS);
         if (!Array.isArray(j.result)) { if (/no tokens/i.test(j.message || '')) return []; throw new Error('unexpected answer'); }
         return j.result.filter((x) => !x.type || x.type === 'ERC-20').map((x) => ({ addr: x.contractAddress, symbol: x.symbol, dec: +x.decimals, raw: x.balance, price: null }));
       },
