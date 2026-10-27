@@ -702,6 +702,28 @@
       return out;
     }
 
+    // Symbiotic restaking vaults (Ethereum): a held token counts as one when Symbiotic's VaultFactory
+    // says isEntity; the stake is activeBalanceOf(owner) in the vault's collateral(), which is then
+    // valued like any other token (liquidity check included). Not ERC-4626, so the vault check above
+    // misses them: 15.9M staked SPK ($302k) counted as nothing. -> { holdings, addrs }
+    const SYMBIOTIC = '0xAEb6bdd95c502390db8f52c8909F703E9Af6a346';
+    async function symbiotic(url, cands, owner, known) {
+      const pad = (a) => a.slice(2).toLowerCase().padStart(64, '0');
+      const ent = await multi(url, cands.map((t) => ({ to: SYMBIOTIC, data: '0x14887c58' + pad(t.addr) })));
+      const vs = cands.filter((t, i) => ent[i].status === 'fulfilled' && /^0x0*1$/.test(ent[i].value)).slice(0, 10);
+      if (!vs.length) return null;
+      const info = await multi(url, vs.flatMap((v) => [{ to: v.addr, data: '0xd8dfeb45' }, { to: v.addr, data: '0x59f769a9' + owner }]));
+      const got = vs.map((v, i) => {
+        const c = info[2 * i], b = info[2 * i + 1];
+        if (c.status !== 'fulfilled' || b.status !== 'fulfilled' || c.value.length < 66 || b.value.length < 66) return null;
+        return { vault: v.addr, collateral: '0x' + c.value.slice(26, 66), raw: BigInt(b.value.slice(0, 66)) };
+      }).filter((x) => x && x.raw > 0n);
+      const px = got.length ? await llamaPrices(LLAMA.eth, [...new Set(got.map((x) => x.collateral))]) : {};
+      const tokens = got.map((x) => { const q = px[lc(x.collateral)]; return q && q.decimals >= 0 ? { addr: x.collateral, symbol: q.symbol, where: ' in Symbiotic', amount: Number(x.raw) / 10 ** q.decimals, price: q.price } : null; }).filter(Boolean);
+      const r = tokens.length ? await judge(tokens, known) : { holdings: [] };
+      return { holdings: r.holdings, addrs: new Set(vs.map((v) => lc(v.addr))), unvalued: got.length > tokens.length };
+    }
+
     // Morpho: vault deposits (v1 and v2) and lending positions (supply and collateral less borrow)
     // from Morpho's own API, one query for every network, shared by the networks' checks.
     // -> { networkKey: { usd, unvalued, vaults: Set(vault address) } }
@@ -736,25 +758,31 @@
     // address on nearly every EVM network): small networks' RPCs refuse a burst of twenty calls.
     // Where it is missing or fails, one call per token. -> [{ status, value }] like allSettled
     const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
-    async function balances(url, tokens, owner) {
-      const each = () => Promise.allSettled(tokens.map((a) => D.rpc(url, 'eth_call', [{ to: a, data: '0x70a08231' + owner }, 'latest'])));
-      if (tokens.length < 2) return each();
-      const w = (n) => n.toString(16).padStart(64, '0'), n = tokens.length;
-      // aggregate3((address target, bool allowFailure, bytes callData)[]): each tuple is 6 words
-      let data = '0x82ad56cb' + w(32) + w(n);
-      for (let i = 0; i < n; i++) data += w(n * 32 + i * 192);
-      for (const a of tokens) data += a.slice(2).toLowerCase().padStart(64, '0') + w(1) + w(96) + w(36) + '70a08231' + owner + '0'.repeat(56);
+    // many calls in one through Multicall3's aggregate3 (allowFailure per call); calls: [{ to, data }]
+    // with data of any length. -> [{ status, value }] like allSettled, value = the call's return data
+    async function multi(url, calls) {
+      const each = () => Promise.allSettled(calls.map((c) => D.rpc(url, 'eth_call', [{ to: c.to, data: c.data }, 'latest'])));
+      if (calls.length < 2) return each();
+      const w = (n) => n.toString(16).padStart(64, '0'), n = calls.length;
+      // aggregate3((address target, bool allowFailure, bytes callData)[]): head of n offsets, then the tuples
+      const tuples = calls.map((c) => { const d = c.data.slice(2), len = d.length / 2; return c.to.slice(2).toLowerCase().padStart(64, '0') + w(1) + w(96) + w(len) + d + '0'.repeat((64 - (d.length % 64)) % 64); });
+      let data = '0x82ad56cb' + w(32) + w(n), at = n * 32;
+      for (const t of tuples) { data += w(at); at += t.length / 2; }
+      data += tuples.join('');
       let r;
       try { r = await D.rpc(url, 'eth_call', [{ to: MULTICALL3, data }, 'latest']); } catch (e) { return each(); }
       if (!/^0x[0-9a-fA-F]*$/.test(r || '') || r.length < 2 + 64 * (2 + n)) return each();   // no Multicall3 here
       const word = (pos) => BigInt('0x' + r.slice(2 + pos * 2, 2 + pos * 2 + 64));
-      const base = Number(word(0)) + 32;                     // start of the array's offsets
-      return tokens.map((_, i) => {
-        const at = base + Number(word(base + 32 * i));      // this result tuple
-        const ok = word(at) === 1n, off = at + Number(word(at + 32)), len = Number(word(off));
-        if (!ok || len !== 32) return { status: 'rejected' };   // not a token, or it reverted
-        return { status: 'fulfilled', value: '0x' + r.slice(2 + (off + 32) * 2, 2 + (off + 64) * 2) };
+      const base = Number(word(0)) + 32;
+      return calls.map((_, i) => {
+        const tup = base + Number(word(base + 32 * i)), ok = word(tup) === 1n, off = tup + Number(word(tup + 32)), len = Number(word(off));
+        return ok ? { status: 'fulfilled', value: '0x' + r.slice(2 + (off + 32) * 2, 2 + (off + 32 + len) * 2) } : { status: 'rejected' };
       });
+    }
+    // balanceOf(owner) on many tokens: a missing or reverted answer, or one that is not one word, is a miss
+    async function balances(url, tokens, owner) {
+      const rs = await multi(url, tokens.map((a) => ({ to: a, data: '0x70a08231' + owner })));
+      return rs.map((r) => (r.status === 'fulfilled' && /^0x[0-9a-fA-F]{64}$/.test(r.value) ? r : r.status === 'fulfilled' && r.value === '0x' ? r : { status: 'rejected' }));
     }
 
     // Pendle: PT, YT and LP positions at Pendle's own valuation, one call for every network. Its PTs
@@ -808,6 +836,15 @@
       const counted = new Set(t.holdings.map((x) => lc(x.addr)));
       const vs = await vaults(c, url, (t.all || []).filter((x) => x.price > 0 && x.amount * x.price >= 10 && !counted.has(lc(x.addr)) && !taken(x.addr)).sort((p, q) => q.amount * q.price - p.amount * p.price)).catch(() => []);
       for (const v of vs) t.holdings.push({ symbol: sym(v.symbol), amount: v.amount, price: null, usdPrice: v.usd / v.amount, addr: v.addr });
+      // Symbiotic vaults among the tokens nothing counted (Ethereum)
+      if (c.key === 'eth') {
+        const counted2 = new Set(t.holdings.map((x) => lc(x.addr)));
+        const sy = await symbiotic(url, (t.all || []).filter((x) => x.amount > 0 && !counted2.has(lc(x.addr)) && !taken(x.addr)).slice(0, 300), addr.slice(2).toLowerCase().padStart(64, '0'), known).catch(() => null);
+        if (sy) {
+          t.holdings.push(...sy.holdings);
+          if (sy.unvalued) t.partial = [t.partial, 'Symbiotic stake not valued'].filter(Boolean).join('; ');
+        }
+      }
       const free = (a) => !a || !taken(a);
       if (mo === 'failed') t.partial = [t.partial, 'Morpho not checked'].filter(Boolean).join('; ');
       else if (mo) {
