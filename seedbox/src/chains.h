@@ -31,12 +31,18 @@ typedef struct {
 // Number of entries derive_all() produces.
 int chains_count(void);
 
-// mnemonic: space separated words. passphrase: "" for none.
+// mnemonic: space separated BIP39 words. passphrase: "" for none.
 // out must have room for chains_count() entries.
 // progress(done,total) is called between chains so the UI can draw a bar; may be NULL.
 // Returns 0 on success.
 int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
                void (*progress)(int done, int total));
+
+// The same rows from a SLIP-39 master secret (16 or 32 bytes, already decrypted with the
+// passphrase, see slip39.h): it is the BIP32 seed as is, as on Trezor and Keystone, and
+// Cardano follows SLIP-0023.
+int derive_all_slip39(const uint8_t* secret, int len, ChainAddr* out,
+                      void (*progress)(int done, int total));
 
 // Optional RNG hook required by trezor-crypto's link step (only used for signing,
 // which this device never does). Fill with anything; defaults to zeros.

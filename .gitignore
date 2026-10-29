@@ -20,3 +20,6 @@ seedbox/test/test_frames
 seedbox/test/node_modules/
 seedbox/test/mine.txt
 seedbox/test/ref.txt
+seedbox/test/test_slip39
+seedbox/test/sim/sim
+seedbox/test/__pycache__/

@@ -12,9 +12,19 @@
 extern "C" {
 #endif
 
+// What every row is derived from. seed is the BIP32 seed: 64 bytes from a BIP39 phrase and
+// passphrase, or a SLIP-39 master secret (16 or 32 bytes) as is. Cardano is the one family
+// that is not BIP32 from that seed: Icarus from the BIP39 entropy and passphrase when
+// mnemonic is set, SLIP-0023 from seed when it is NULL (Trezor's rule for SLIP-39).
+typedef struct {
+  const uint8_t* seed; int seedlen;
+  const char* mnemonic;     // BIP39 phrase, or NULL for SLIP-39
+  const char* passphrase;   // BIP39 passphrase ("" for none); Icarus uses it too
+} SeedIn;
+
 // seed -> node at path (curve: SECP256K1_NAME, ED25519_NAME, NIST256P1_NAME...), public key filled.
 // Returns 0 on success.
-int cu_derive(HDNode* n, const uint8_t seed[64], const char* curve, const uint32_t* path, int depth);
+int cu_derive(HDNode* n, const SeedIn* in, const char* curve, const uint32_t* path, int depth);
 void cu_hex_0x(const uint8_t* b, int n, char* out);                  // "0x" + lowercase hex
 void cu_eth_addr_bytes(const HDNode* n, uint8_t out[20]);            // keccak256(uncompressed pub)[12..32]
 void cu_eth_checksum(const uint8_t a[20], char* out);                // EIP-55 string
@@ -26,9 +36,9 @@ void cu_row(ChainAddr* r, const char* name, const char* path, const char* link, 
 void cu_xpub_record(ChainAddr* r, uint8_t type, const HDNode* node, uint32_t fp);
 
 // Extension groups (one file each). Each fills its rows after the 20 core rows.
-int ext_utxo_count(void);   int ext_utxo_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out);
-int ext_cosmos_count(void); int ext_cosmos_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out);
-int ext_ed_count(void);     int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out);
+int ext_utxo_count(void);   int ext_utxo_derive(const SeedIn* in, ChainAddr* out);
+int ext_cosmos_count(void); int ext_cosmos_derive(const SeedIn* in, ChainAddr* out);
+int ext_ed_count(void);     int ext_ed_derive(const SeedIn* in, ChainAddr* out);
 
 #ifdef __cplusplus
 }

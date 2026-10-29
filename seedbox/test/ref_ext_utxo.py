@@ -2,8 +2,7 @@
 # Coins bip_utils knows use its own address encoders; the rest (eCash at 899, Ravencoin, Kaia,
 # Kaspa, ICP) derive the key with bip_utils' generic BIP32 and build the address here.
 import sys, hashlib, zlib, bip_utils as b
-m = sys.argv[1]
-seed = b.Bip39SeedGenerator(m).Generate()
+from ref_seed import m, pw, seed, cardano_root
 C = b.Bip44Coins
 EXT = b.Bip44Changes.CHAIN_EXT
 

@@ -6,7 +6,8 @@
  *           Bourns PEC11R rotary encoder with push switch
  *
  * Flow:
- *   1. Type a 12, 15, 18, 21 or 24 word BIP39 seed in with the knob.
+ *   1. Type a 12, 15, 18, 21 or 24 word BIP39 seed in with the knob, or a 20 or 33
+ *      word SLIP-39 (Shamir) backup, every share it needs; then an optional passphrase.
  *   2. The device derives public addresses for 20 chains (one EVM address
  *      covers Ethereum, Base, Arbitrum, Polygon, BSC, Optimism, Avalanche...).
  *   3. The seed is zeroed from RAM the moment derivation finishes.
@@ -28,6 +29,7 @@
 #include "ui_types.h"
 #include <glcdfont.c>          // Adafruit GFX's built-in 5x7 font, for the sideways QR labels
 #include "seedcore.h"
+#include "src/slip39.h"
 #include "src/chains.h"
 #include "src/portfolio.h"
 
@@ -68,26 +70,51 @@ static int SCR_W = 160, SCR_H = 128;   // set from the display after rotation
 Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
 
 // ---------------- State ----------------
-// Secret: only exists between the last word being entered and derivation finishing.
-static uint16_t gIdx[24];
-static bool     gHave[24];        // slot i holds a word (slots can be filled in any order)
+// Secret: only exists between the first word being entered and derivation finishing.
+#define MAX_WORDS 33              // SLIP-39 256-bit shares; BIP39 tops out at 24
+#define PASS_MAX  100             // passphrase length (Ledger allows 100, Trezor 50)
+static uint16_t gIdx[MAX_WORDS];
+static bool     gHave[MAX_WORDS]; // slot i holds a word (slots can be filled in any order)
 static char     gMnemonic[24 * 9];
+static bool     gSlip = false;    // the words being typed are a SLIP-39 share (20/33-word backup)
+static int      gShareNo = 0;     // SLIP-39: which share is on screen (1, 2, ...)
+static Slip39Set gShares;         // SLIP-39 shares typed so far
+static char     gPass[PASS_MAX + 1];   // passphrase, "" for none
 // Public: derived addresses, kept until wipe / idle timeout / power off.
 static ChainAddr gAddr[CHAINS_MAX];
 static bool      gLoaded = false;
+static bool      gUsedPass = false;   // the addresses were derived with a passphrase (shown in titles)
 
 static int haveCount(int nwords) { int n = 0; for (int i = 0; i < nwords; i++) n += gHave[i]; return n; }
 
-static void wipeSecret() {
+static void wipeWords() {
   secure_zero(gIdx, sizeof gIdx);
   secure_zero(gHave, sizeof gHave);
   secure_zero(gMnemonic, sizeof gMnemonic);
+}
+
+static void wipeSecret() {
+  wipeWords();
+  secure_zero(&gShares, sizeof gShares);
+  secure_zero(gPass, sizeof gPass);
 }
 
 static void wipeAll() {
   wipeSecret();
   secure_zero(gAddr, sizeof gAddr);
   gLoaded = false;
+  gUsedPass = false;
+}
+
+// The word list being typed from: BIP39 (2048 words) or SLIP-39 (1024).
+static const char* wordAt(int i) { return gSlip ? slip39_word(i) : WORDS[i]; }
+// How many words start with prefix; *first = the first of them (lists are sorted).
+static int matches(const char* prefix, int* first) {
+  if (gSlip) return slip39_prefix(prefix, first);
+  uint16_t f = 0; int total = 0;
+  bip39_prefix(prefix, &f, 1, &total);
+  if (first) *first = total ? f : 0;
+  return total;
 }
 
 // Overwrite the stack region below the current frame. Derivation leaves copies
@@ -241,8 +268,9 @@ static void lineAt(int x, int y, const char* s, uint16_t color, int width) {
   tft.setTextColor(C_FG);
 }
 
-// Full-screen message, waits for a press.
-static void message(const char* l1, const char* l2, const char* l3, uint16_t color) {
+// Full-screen message, waits for a press. Returns true if it ended in the idle timeout:
+// everything secret is wiped by then, and the caller must stop, not carry on.
+static bool message(const char* l1, const char* l2, const char* l3, uint16_t color) {
   clearScreen();
   textAt(4, 30, l1, color);
   if (l2) textAt(4, 48, l2);
@@ -250,7 +278,8 @@ static void message(const char* l1, const char* l2, const char* l3, uint16_t col
   textAt(4, SCR_H - 16, "press knob", C_DIM);
   for (;;) {
     Ev e = waitEvent();
-    if (e == EV_PRESS || isBack(e)) return;
+    if (e == EV_TIMEOUT) return true;
+    if (e == EV_PRESS || e == EV_LONG) return false;
   }
 }
 
@@ -531,7 +560,7 @@ static void showMore(int n) {
       char what[28];
       if (i <= n) snprintf(what, sizeof what, "MORE %d/%d", i, n);
       else snprintf(what, sizeof what, "MORE mix %d", i - n);
-      char right[24];   // a margin holds ~21 sideways characters; the measured draw time shows while paused
+      char right[40];   // a margin holds ~21 sideways characters; the measured draw time shows while paused
       if (paused) snprintf(right, sizeof right, "hold:back  draw %ums", (unsigned)((gQrDrawUs + 500) / 1000));
       else snprintf(right, sizeof right, "turn:step hold:back");
       qrLabels(what, paused ? " press:play" : "  scan me", right);
@@ -604,7 +633,7 @@ static void browseAddresses() {
   items[n + 1] = "Wipe & exit";
   int sel = 0;
   while (gLoaded) {
-    sel = runMenu("Addresses", items, n + 2, sel, 1);
+    sel = runMenu(gUsedPass ? "Addresses (passphrase)" : "Addresses", items, n + 2, sel, 1);
     if (sel == MENU_BACK) { sel = n + 1; continue; }    // hold just jumps to "Wipe & exit"
     if (sel < 0 || sel == n + 1) break;
     if (sel == 0) { showPortfolio(); continue; }
@@ -635,23 +664,59 @@ static void rngFill(uint8_t* buf, size_t len) {
   }
 }
 
+static void deriveScreen(const char* title) {
+  clearScreen();
+  drawTitle(title);
+  textAt(4, 40, "Seed is in RAM only", C_DIM);
+  textAt(4, 52, "for a few seconds.", C_DIM);
+  tft.drawRect(4, 70, SCR_W - 8, 10, C_FG);
+}
+
+// BIP39: the typed words and gPass -> gAddr. Wipes every secret either way.
 static bool deriveFromEntered(int nwords) {
-  // build the mnemonic string
+  uint8_t ent[32];
+  bool valid = haveCount(nwords) == nwords && bip39_decode(gIdx, nwords, ent);
+  secure_zero(ent, sizeof ent);
+  if (!valid) { wipeAll(); message("Phrase incomplete", "Nothing was derived.", "Start again.", C_BAD); return false; }
   gMnemonic[0] = 0;
   for (int i = 0; i < nwords; i++) {
     if (i) strcat(gMnemonic, " ");
     strcat(gMnemonic, WORDS[gIdx[i]]);
   }
-  clearScreen();
-  drawTitle("Deriving addresses");
-  textAt(4, 40, "Seed is in RAM only", C_DIM);
-  textAt(4, 52, "for a few seconds.", C_DIM);
-  tft.drawRect(4, 70, SCR_W - 8, 10, C_FG);
-  int rc = derive_all(gMnemonic, "", gAddr, deriveProgress);
+  bool withPass = gPass[0] != 0;
+  deriveScreen("Deriving addresses");
+  int rc = derive_all(gMnemonic, gPass, gAddr, deriveProgress);
   wipeSecret();
   scrubStack();
   if (rc != 0) { wipeAll(); message("Derivation failed", nullptr, nullptr, C_BAD); return false; }
-  gLoaded = true;
+  gLoaded = true; gUsedPass = withPass;
+  return true;
+}
+
+// SLIP-39: the collected shares and gPass -> master secret -> gAddr. The decryption runs
+// PBKDF2 20,000 times (Trezor's default), a few seconds, so it gets its own bar.
+static void unlockProgress(int done, int total) {
+  if (total > 0) tft.fillRect(5, 71, ((SCR_W - 10) * done) / total, 8, C_OK);
+}
+static bool deriveFromShares() {
+  uint8_t secret[SLIP39_MAX_SECRET];
+  int len = 0;
+  if (!slip39_ready(&gShares)) { wipeAll(); message("Shares incomplete", "Nothing was derived.", "Start again.", C_BAD); return false; }
+  bool withPass = gPass[0] != 0;
+  deriveScreen("Unlocking backup");
+  Slip39Result r = slip39_recover(&gShares, gPass, secret, &len, unlockProgress);
+  wipeSecret();
+  int rc = -1;
+  if (r == SLIP39_OK) {
+    deriveScreen("Deriving addresses");
+    rc = derive_all_slip39(secret, len, gAddr, deriveProgress);
+  }
+  secure_zero(secret, sizeof secret);
+  scrubStack();
+  if (r == SLIP39_ERR_DIGEST) { wipeAll(); message("Shares do not match", "One share is mistyped or", "from another backup.", C_BAD); return false; }
+  if (r != SLIP39_OK) { wipeAll(); message("Could not unlock", "Nothing was derived.", "Start again.", C_BAD); return false; }
+  if (rc != 0) { wipeAll(); message("Derivation failed", nullptr, nullptr, C_BAD); return false; }
+  gLoaded = true; gUsedPass = withPass;
   return true;
 }
 
@@ -667,18 +732,24 @@ static bool deriveFromEntered(int nwords) {
 #define PS_TIMEOUT (-3)
 
 // Returns a slot index to edit, PS_DERIVE, PS_BACK or PS_TIMEOUT.
+// 33-word shares do not fit one screen: the overview shows 24 at a time (two pages, the
+// page turning as the cursor crosses), with the page in the title bar.
+#define PS_PER_PAGE 24
 static int phraseScreen(int nwords, int cur) {
   const bool full = (haveCount(nwords) == nwords);
-  const int cols = 2, rows = (nwords + cols - 1) / cols;
-  const int y0 = 14, rh = (SCR_H - y0) / rows;              // 19 px for 12 words, 14/12/10 for 15/18/21, 9 for 24
+  const int per = nwords < PS_PER_PAGE ? nwords : PS_PER_PAGE, pages = (nwords + PS_PER_PAGE - 1) / PS_PER_PAGE;
+  const int cols = 2, rows = (per + cols - 1) / cols;
+  const int y0 = 14, rh = (SCR_H - y0) / rows;              // 19 px for 12 words, 14/12/11/10 for 15/18/20/21, 9 for 24 and 33
   const int sy = (rh >= 18) ? 2 : 1;                        // letter height multiplier
   const int cellW = (SCR_W - 4) / cols;                     // 78 landscape
   const int lo = full ? PS_DERIVE : 0, hi = nwords - 1;
   if (cur < lo) cur = lo;
   if (cur > hi) cur = hi;
+  int page = -1;
 
   auto cell = [&](int i, bool sel) {
-    int x = 2 + (i / rows) * cellW, y = y0 + (i % rows) * rh;
+    int li = i - page * PS_PER_PAGE;
+    int x = 2 + (li / rows) * cellW, y = y0 + (li % rows) * rh;
     tft.fillRect(x, y, cellW - 2, rh - 1, sel ? C_HI : C_BG);
     tft.setTextColor(sel ? ST77XX_BLACK : C_DIM);
     tft.setCursor(x + 1, y + (rh - 1 - 8) / 2);
@@ -687,37 +758,46 @@ static int phraseScreen(int nwords, int cur) {
     tft.setTextSize(1, sy);
     tft.setTextColor(sel ? ST77XX_BLACK : (gHave[i] ? C_FG : C_DIM));
     tft.setCursor(x + 16, y + (rh - 1 - 8 * sy) / 2);
-    tft.print(gHave[i] ? WORDS[gIdx[i]] : "----");
+    tft.print(gHave[i] ? wordAt(gIdx[i]) : "----");
     tft.setTextSize(1);
     tft.setTextColor(C_FG);
   };
   auto title = [&](int c) {
     if (c == PS_DERIVE) {
       tft.fillRect(0, 0, SCR_W, 11, C_HI);
-      textAt(2, 2, "> Derive addresses", ST77XX_BLACK);
+      textAt(2, 2, gSlip ? "> Use this share" : "> Derive addresses", ST77XX_BLACK);
+    } else if (pages > 1) {
+      drawTitle(gHave[c] ? "press:edit hold:back" : "press:type hold:back");
+      char tag[24]; snprintf(tag, sizeof tag, "%d/%d", page + 1, pages);
+      titleTag(tag);
     } else drawTitle(gHave[c] ? "press: edit   hold: back" : "press: type   hold: back");
   };
-
-  // frame: the strips no cell covers, then every cell
-  tft.fillRect(0, 11, SCR_W, y0 - 11, C_BG);
-  tft.fillRect(0, y0, 2, rows * rh, C_BG);
-  for (int c = 0; c < cols; c++) {
-    int x = 2 + c * cellW;
-    tft.fillRect(x + cellW - 2, y0, 2, rows * rh, C_BG);                       // gutter
-    for (int r = 0; r < rows; r++) tft.drawFastHLine(x, y0 + r * rh + rh - 1, cellW - 2, C_BG);
-  }
-  tft.fillRect(2 + cols * cellW, y0, SCR_W - 2 - cols * cellW, rows * rh, C_BG);
-  tft.fillRect(0, y0 + rows * rh, SCR_W, SCR_H - y0 - rows * rh, C_BG);
-  for (int i = 0; i < nwords; i++) cell(i, i == cur);
-  for (int i = nwords; i < rows * cols; i++)               // 15 and 21 words leave the last cell empty
-    tft.fillRect(2 + (i / rows) * cellW, y0 + (i % rows) * rh, cellW, rh, C_BG);
+  // frame: the strips no cell covers, then every cell of the page
+  auto drawPage = [&](int pg) {
+    page = pg;
+    tft.fillRect(0, 11, SCR_W, y0 - 11, C_BG);
+    tft.fillRect(0, y0, 2, rows * rh, C_BG);
+    for (int c = 0; c < cols; c++) {
+      int x = 2 + c * cellW;
+      tft.fillRect(x + cellW - 2, y0, 2, rows * rh, C_BG);                       // gutter
+      for (int r = 0; r < rows; r++) tft.drawFastHLine(x, y0 + r * rh + rh - 1, cellW - 2, C_BG);
+    }
+    tft.fillRect(2 + cols * cellW, y0, SCR_W - 2 - cols * cellW, rows * rh, C_BG);
+    tft.fillRect(0, y0 + rows * rh, SCR_W, SCR_H - y0 - rows * rh, C_BG);
+    int from = pg * PS_PER_PAGE, to = from + PS_PER_PAGE < nwords ? from + PS_PER_PAGE : nwords;
+    for (int i = from; i < to; i++) cell(i, i == cur);
+    for (int li = to - from; li < rows * cols; li++)       // 15, 21 and page 2 of 33 leave cells empty
+      tft.fillRect(2 + (li / rows) * cellW, y0 + (li % rows) * rh, cellW, rh, C_BG);
+  };
 
   int prev = cur, shown = -9;
   for (;;) {
+    int pg = cur < 0 ? (page < 0 ? 0 : page) : cur / PS_PER_PAGE;
+    if (pg != page) { drawPage(pg); shown = -9; prev = cur; }
     int kind = (cur == PS_DERIVE) ? 0 : (gHave[cur] ? 1 : 2);
     if (kind != shown) { title(cur); shown = kind; }
     if (prev != cur) {
-      if (prev >= 0) cell(prev, false);
+      if (prev >= 0 && prev / PS_PER_PAGE == page) cell(prev, false);
       if (cur >= 0) cell(cur, true);
     }
     prev = cur;
@@ -770,14 +850,17 @@ static void wsGeometry(WordScreen& g) {
 // yellow beside them with an underscore cursor. With nothing typed, the word the
 // slot already holds in grey, or just the cursor. Painted in place, no clear.
 static void wsDrawTop(const WordScreen& g, int w, int nwords, const char* prefix) {
-  char num[8]; snprintf(num, sizeof num, "%d/%d", w + 1, nwords);
-  lineAt(2, 2, "Word", C_FG, 5);
+  char num[24], what[16];
+  snprintf(num, sizeof num, "%d/%d", w + 1, nwords);
+  if (gSlip && gShareNo > 1) snprintf(what, sizeof what, "Sh %d", gShareNo);   // which SLIP-39 share
+  else snprintf(what, sizeof what, "Word");
+  lineAt(2, 2, what, gShareNo > 1 ? C_HI : C_FG, 5);
   lineAt(2, 12, num, C_FG, 5);
   const int bx = 34, bw = 8 * 12;                // 8 glyphs of 12 px: the longest BIP39 word
   char big[10];
   uint16_t color = C_HI;
   if (prefix[0]) snprintf(big, sizeof big, "%s_", prefix);
-  else if (gHave[w]) { snprintf(big, sizeof big, "%s", WORDS[gIdx[w]]); color = C_DIM; }
+  else if (gHave[w]) { snprintf(big, sizeof big, "%s", wordAt(gIdx[w])); color = C_DIM; }
   else snprintf(big, sizeof big, "_");
   tft.setTextSize(2);
   tft.setTextColor(color, C_BG);
@@ -805,7 +888,7 @@ static void wsDrawTop(const WordScreen& g, int w, int nwords, const char* prefix
 static void wsDrawWord(const WordScreen& g, int first, int total, int page, int k, bool cur) {
   int idx = page * g.perPage + k;
   int x = 2 + (k / g.lines) * g.cellW, y = g.listY + (k % g.lines) * 10;
-  const char* w = (idx < total) ? WORDS[first + idx] : "";
+  const char* w = (idx < total) ? wordAt(first + idx) : "";
   tft.setTextColor(cur ? C_HI : C_FG, C_BG);
   tft.setCursor(x, y);
   tft.write(cur ? '>' : ' ');
@@ -842,13 +925,12 @@ static void wsDrawKey(const WordScreen& g, int k, bool enabled, bool cur) {
 // lands on or next to it instead of jumping back to the start of the keyboard.
 static int wordScreen(int w, int nwords, const char* prefix, int startKey) {
   WordScreen g; wsGeometry(g);
-  uint16_t f1[1]; int total = 0;
-  int first = bip39_prefix(prefix, f1, 1, &total) ? f1[0] : 0;   // matches are contiguous in the sorted list
+  int first = 0;
+  int total = matches(prefix, &first);           // matches are contiguous in the sorted list
   bool keyOk[NKEYS];
   for (int k = 0; k < 26; k++) {
     char p2[10]; snprintf(p2, sizeof p2, "%s%c", prefix, 'a' + k);
-    int tt = 0; bip39_prefix(p2, nullptr, 0, &tt);
-    keyOk[k] = tt > 0;
+    keyOk[k] = matches(p2, nullptr) > 0;
   }
   keyOk[KEY_DEL]  = true;
   keyOk[KEY_PREV] = w > 0;
@@ -915,12 +997,25 @@ static int wordScreen(int w, int nwords, const char* prefix, int startKey) {
   }
 }
 
-static bool checksumOk(int nwords) {
+// The typed words make a valid phrase: the BIP39 checksum, or for a SLIP-39 share its
+// RS1024 checksum (which catches any 3 wrong words) and a well-formed header.
+// Returns 1 if valid, 0 if not (after saying so), -1 if the message timed out (all wiped).
+static int checksumOk(int nwords) {
+  bool ok;
+  if (gSlip) {
+    Slip39Share sh;
+    Slip39Result r = slip39_parse(gIdx, nwords, &sh);
+    secure_zero(&sh, sizeof sh);
+    ok = (r == SLIP39_OK);
+    if (r == SLIP39_ERR_CHECKSUM) { if (message("Checksum invalid", "One word is wrong.", "Pick it and retype it.", C_BAD)) return -1; }
+    else if (!ok) { if (message("Not a valid share", "Check every word against", "the backup card.", C_BAD)) return -1; }
+    return ok ? 1 : 0;
+  }
   uint8_t ent[32];
-  bool ok = bip39_decode(gIdx, nwords, ent);
+  ok = bip39_decode(gIdx, nwords, ent);
   secure_zero(ent, sizeof ent);
-  if (!ok) message("Checksum invalid", "One word is wrong.", "Pick it and retype it.", C_BAD);
-  return ok;
+  if (!ok && message("Checksum invalid", "One word is wrong.", "Pick it and retype it.", C_BAD)) return -1;
+  return ok ? 1 : 0;
 }
 
 // Entry: one word screen at a time, the phrase overview whenever the user asks for
@@ -928,20 +1023,23 @@ static bool checksumOk(int nwords) {
 // 12-word seed (31/32, 63/64, 127/128 on 15/18/21; 255 of 256 on 24), so the user
 // eyeballs the phrase before deriving.
 // A wrong checksum sends them back to the overview to fix a word, not to the menu.
+// Returns true once all nwords are in and pass the checksum (gIdx holds them).
 static bool enterSeed(int nwords) {
   char prefix[8] = "";
   int plen = 0, w = 0;                         // w is the slot on screen
-  wipeSecret();                               // every slot starts empty
+  wipeWords();                                 // every slot starts empty (earlier SLIP-39 shares stay)
   int lastKey = -1;                            // keyboard key pressed on the previous screen
   auto clearPrefix = [&]() { plen = 0; prefix[0] = 0; };
   for (;;) {
-    if (w >= nwords) {                         // every slot is in: check the phrase, then derive
+    if (w >= nwords) {                         // every slot is in: check the phrase
       int p = phraseScreen(nwords, PS_DERIVE);
       if (p == PS_TIMEOUT) { clearScreen(); return false; }
       if (p == PS_BACK) { w = nwords - 1; continue; }
       if (p >= 0) { w = p; continue; }
-      if (!checksumOk(nwords)) continue;
-      return deriveFromEntered(nwords);
+      int c = checksumOk(nwords);
+      if (c < 0) { clearScreen(); return false; }
+      if (!c) continue;
+      return true;
     }
     gHoldY = 0;                                // keyboard reaches the bottom: hold bar on top
     int r = wordScreen(w, nwords, prefix, lastKey);
@@ -958,10 +1056,11 @@ static bool enterSeed(int nwords) {
     } else if (r == WS_DEL) {
       if (plen > 0) prefix[--plen] = 0;
       else if (w > 0) w--;
-      else if (haveCount(nwords) == 0) { clearScreen(); return false; }    // nothing typed yet: back to the menu
+      else if (haveCount(nwords) == 0 && gShares.n == 0) { clearScreen(); return false; }   // nothing typed yet: back to the menu
       else {                                                    // words are in: make sure
         static const char* const q[] = { "Keep typing", "Quit, forget words" };
-        int a = runMenu("Quit?", q, 2, 0, 1);
+        static const char* const qs[] = { "Keep typing", "Quit, forget all shares" };
+        int a = runMenu("Quit?", gShares.n ? qs : q, 2, 0, 1);
         if (a == MENU_TIMEOUT) { clearScreen(); return false; }
         if (a == 1) { wipeSecret(); clearScreen(); return false; }
       }
@@ -972,12 +1071,261 @@ static bool enterSeed(int nwords) {
       if (p == PS_TIMEOUT) { clearScreen(); return false; }
       if (p >= 0) { w = p; clearPrefix(); }
       else if (p == PS_DERIVE) {
-        if (checksumOk(nwords)) return deriveFromEntered(nwords);
+        int c = checksumOk(nwords);
+        if (c < 0) { clearScreen(); return false; }
+        if (c) return true;
         w = nwords;                            // back to the overview to fix a word
       }
       // PS_BACK: stay on this word, typed letters kept
     } else { clearScreen(); return false; }    // WS_TIMEOUT: already wiped
   }
+}
+
+// Two choices on rows y and y + 14, the cursor on a yellow bar. Returns 0 or 1,
+// MENU_BACK (hold) or MENU_TIMEOUT. For screens that explain something above the choice.
+static int choiceAt(int y, const char* a, const char* b, int sel) {
+  const char* items[2] = { a, b };
+  int prev = -1;
+  for (;;) {
+    if (sel != prev) {
+      for (int i = 0; i < 2; i++) {
+        tft.fillRect(0, y + 14 * i, SCR_W, 13, i == sel ? C_HI : C_BG);
+        textAt(4, y + 14 * i + 3, items[i], i == sel ? ST77XX_BLACK : C_FG);
+      }
+      prev = sel;
+    }
+    Ev e = waitEvent();
+    if (e == EV_CW || e == EV_CCW) sel ^= 1;
+    else if (e == EV_PRESS) return sel;
+    else if (e == EV_LONG) return MENU_BACK;
+    else if (e == EV_TIMEOUT) return MENU_TIMEOUT;
+  }
+}
+
+// ---------------- Passphrase ----------------
+// The optional "25th word" (BIP39) or SLIP-39 passphrase. Asked once the words are in;
+// "No passphrase" is first, since most people have none. The keyboard: 27 character keys
+// in 3 rows of 9 and a control row, as on the word screen. Four pages of keys (abc, ABC,
+// 123, #+=), every printable ASCII character between them. The text shows spaces as dots,
+// so a stray space is visible, and the review screen shows it all once more before use.
+#define PK_COLS  9
+#define PK_CHARS 27                  // character keys per page
+#define PK_MODE  27                  // control row: next page, delete, done
+#define PK_DEL   28
+#define PK_DONE  29
+#define PK_KEYS  30
+static const char* const PK_PAGE[4] = {
+  "abcdefghijklmnopqrstuvwxyz ",
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ ",
+  "0123456789.,-_@!?#$%&*+=/:;",
+  "\"'()<>[\\]^`{|}~ ",
+};
+static const char* const PK_NAME[4] = { "abc", "ABC", "123", "#+=" };
+
+// The passphrase in four lines of 26 from y, spaces as small dots, cursor after it if asked.
+static void drawPassText(int y, bool cursor) {
+  int len = strlen(gPass);
+  for (int i = 0; i < 4 * 26; i++) {
+    int x = 2 + (i % 26) * 6, yy = y + (i / 26) * 10;
+    char c = i < len ? gPass[i] : (i == len && cursor ? '_' : ' ');
+    tft.setTextColor(i == len ? C_HI : C_FG, C_BG);
+    tft.setCursor(x, yy);
+    tft.write(c == ' ' ? ' ' : c);
+    if (i < len && c == ' ') tft.fillRect(x + 2, yy + 3, 2, 2, C_DIM);
+  }
+  tft.setTextColor(C_FG);
+}
+
+#define PK_DONE_RET    1
+#define PK_BACK_RET    0
+#define PK_TIMEOUT_RET (-1)
+static int passKeyboard() {
+  const int keyH = 12, keyY = SCR_H - 4 * keyH, keyW = (SCR_W - 2) / PK_COLS, ctlW = (SCR_W - 2) / 3;
+  int page = 0, cur = 0, prev = -1;
+  bool redrawAll = true;
+  clearScreen();
+  gHoldY = 0;                                    // the keys reach the bottom: hold bar on top
+  auto enabled = [&](int k) {
+    if (k >= PK_CHARS) return k != PK_DEL || gPass[0] != 0;
+    return k < (int)strlen(PK_PAGE[page]) && (int)strlen(gPass) < PASS_MAX;
+  };
+  while (!enabled(cur)) cur = (cur + 1) % PK_KEYS;   // reopened on a full passphrase: start on a control
+  auto drawKey = [&](int k) {
+    int x, y, w;
+    char one[4] = { 0 };
+    const char* label = one;
+    if (k < PK_CHARS) {
+      x = 1 + (k % PK_COLS) * keyW; y = keyY + (k / PK_COLS) * keyH; w = keyW;
+      char c = k < (int)strlen(PK_PAGE[page]) ? PK_PAGE[page][k] : 0;
+      if (c == ' ') label = "sp"; else one[0] = c;
+    } else {
+      x = 1 + (k - PK_MODE) * ctlW; y = keyY + 3 * keyH; w = ctlW;
+      label = k == PK_MODE ? PK_NAME[(page + 1) % 4] : k == PK_DEL ? "\x1B del" : "done";
+    }
+    bool c = (k == cur);
+    tft.fillRect(x, y, w, keyH, c ? C_HI : C_BG);
+    tft.setTextColor(c ? ST77XX_BLACK : (enabled(k) ? C_FG : C_DIM));
+    tft.setCursor(x + (w - 6 * (int)strlen(label)) / 2, y + 2);
+    tft.print(label);
+    tft.setTextColor(C_FG);
+  };
+  for (;;) {
+    if (redrawAll) {
+      char tag[16]; snprintf(tag, sizeof tag, "%d/%d", (int)strlen(gPass), PASS_MAX);
+      drawTitle("Passphrase");
+      titleTag(tag);
+      tft.fillRect(0, 11, SCR_W, 3, C_BG);
+      drawPassText(14, true);
+      lineAt(2, 56, "Case matters. hold: back", C_DIM, 26);
+      char m[27]; snprintf(m, sizeof m, "Keys: %s  (next: %s)", PK_NAME[page], PK_NAME[(page + 1) % 4]);
+      lineAt(2, 66, m, C_DIM, 26);
+      tft.fillRect(0, 54, SCR_W, 2, C_BG);
+      tft.fillRect(0, 74, SCR_W, keyY - 74, C_BG);
+      tft.fillRect(1 + PK_COLS * keyW, keyY, SCR_W - 1 - PK_COLS * keyW, 3 * keyH, C_BG);
+      for (int k = 0; k < PK_KEYS; k++) drawKey(k);
+      redrawAll = false; prev = cur;
+    } else if (prev != cur) { drawKey(prev); drawKey(cur); prev = cur; }
+    Ev e = waitEvent();
+    if (e == EV_CW || e == EV_CCW) {
+      int d = (e == EV_CW) ? 1 : -1;
+      do { cur = (cur + d + PK_KEYS) % PK_KEYS; } while (!enabled(cur));
+    } else if (e == EV_PRESS) {
+      int len = strlen(gPass);
+      if (cur < PK_CHARS) { if (len < PASS_MAX) { gPass[len] = PK_PAGE[page][cur]; gPass[len + 1] = 0; } }
+      else if (cur == PK_MODE) page = (page + 1) % 4;
+      else if (cur == PK_DEL) { if (len) gPass[len - 1] = 0; }
+      else { gHoldY = -1; return PK_DONE_RET; }
+      while (!enabled(cur)) cur = (cur + 1) % PK_KEYS;   // full, emptied or a shorter page
+      redrawAll = true;
+    } else if (e == EV_LONG) { gHoldY = -1; return PK_BACK_RET; }
+    else if (e == EV_TIMEOUT) { gHoldY = -1; return PK_TIMEOUT_RET; }
+  }
+}
+
+// Returns true to go on (gPass holds the passphrase, "" for none), false to quit (timeout,
+// or quit confirmed; secrets wiped).
+static bool askPassphrase() {
+  static const char* const q[] = { "No passphrase", "Type a passphrase", "What is a passphrase?" };
+  int sel = gPass[0] ? 1 : 0;
+  for (;;) {
+    int a = runMenu("Extra passphrase?", q, 3, sel, 1);
+    if (a == MENU_TIMEOUT) return false;
+    if (a == MENU_BACK) {
+      static const char* const k[] = { "Keep going", "Quit, forget words" };
+      int b = runMenu("Quit?", k, 2, 0, 1);
+      if (b == MENU_TIMEOUT) return false;
+      if (b == 1) { wipeSecret(); clearScreen(); return false; }
+      continue;
+    }
+    sel = a;
+    if (a == 0) { secure_zero(gPass, sizeof gPass); return true; }
+    if (a == 2) {
+      if (message("Optional: some wallets", "add a passphrase to the", "words. Not sure? Pick No.", C_HI)) return false;
+      continue;
+    }
+    // type it, then look it over: a typo opens a different (empty) wallet, nothing warns
+    for (;;) {
+      int r = passKeyboard();
+      if (r == PK_TIMEOUT_RET) return false;
+      if (r == PK_BACK_RET) break;
+      if (!gPass[0]) return true;                 // done on an empty passphrase: none
+      clearScreen();
+      drawTitle("Is this right?");
+      drawPassText(14, false);
+      char n[40]; snprintf(n, sizeof n, "%d chars; dots are spaces", (int)strlen(gPass));
+      textAt(2, 56, n, C_DIM);
+      textAt(2, 66, "A typo opens a different", C_DIM);
+      textAt(2, 76, "wallet with nothing in it.", C_DIM);
+      int c = choiceAt(SCR_H - 30, "Yes, use it", "Edit", 0);
+      if (c == MENU_TIMEOUT) return false;
+      if (c == 0) return true;
+    }
+  }
+}
+
+// ---------------- Whole flows ----------------
+// BIP39 (12-24 words): words, passphrase, derive.
+static bool runBip39(int nwords) {
+  gSlip = false; gShareNo = 0;
+  wipeSecret();
+  if (!enterSeed(nwords)) return false;
+  if (!askPassphrase()) { wipeSecret(); return false; }
+  return deriveFromEntered(nwords);
+}
+
+// SLIP-39 (20 or 33 words): one share or several. After each share the device says how
+// many more it needs (it reads the thresholds from the share itself), then the passphrase.
+static bool runSlip39(int nwords) {
+  gSlip = true; gShareNo = 1;
+  wipeSecret();
+  slip39_init(&gShares);
+  for (;;) {
+    if (!enterSeed(nwords)) { wipeSecret(); return false; }
+    Slip39Share sh;
+    slip39_parse(gIdx, nwords, &sh);             // checksumOk() has parsed it once already
+    Slip39Result r = slip39_add(&gShares, &sh);
+    secure_zero(&sh, sizeof sh);
+    wipeWords();
+    bool late = false;                            // a message ran into the idle timeout: all wiped, stop
+    if (r == SLIP39_DUPLICATE) late = message("Already entered", "That share is in already.", "Type a different one.", C_BAD);
+    else if (r == SLIP39_OTHER_BACKUP) late = message("Different backup", "That share belongs to", "another backup. Skipped.", C_BAD);
+    else if (r == SLIP39_GROUP_MISMATCH) late = message("Share does not fit", "It clashes with a share", "already in. Skipped.", C_BAD);
+    else if (r == SLIP39_FULL) { wipeSecret(); message("Too many shares", nullptr, nullptr, C_BAD); return false; }
+    else gShareNo = gShares.n + 1;
+    if (late) { clearScreen(); return false; }
+    if (slip39_ready(&gShares)) break;
+
+    // progress: one group (the usual case) or several
+    Slip39Status st; slip39_status(&gShares, &st);
+    clearScreen();
+    drawTitle("Shamir backup");
+    char l[32];
+    int y = 18;
+    if (st.gcnt == 1) {
+      int g = gShares.s[0].gidx;
+      snprintf(l, sizeof l, "%d of %d shares in.", st.have[g], st.need[g]);
+      textAt(4, y, l, C_OK); y += 14;
+      snprintf(l, sizeof l, "Type %d more share%s.", st.need[g] - st.have[g], st.need[g] - st.have[g] == 1 ? "" : "s");
+      textAt(4, y, l); y += 12;
+      textAt(4, y, "Any of them, any order.", C_DIM);
+    } else {
+      snprintf(l, sizeof l, "%d of %d groups done.", st.gdone, st.gthr);
+      textAt(4, y, l, C_OK); y += 12;
+      snprintf(l, sizeof l, "(%d groups; any %d do.)", st.gcnt, st.gthr);
+      textAt(4, y, l, C_DIM); y += 12;
+      int started = 0, shown = 0;
+      for (int g = 0; g < 16; g++) started += st.need[g] != 0;
+      for (int g = 0; g < 16; g++) {
+        if (!st.need[g]) continue;
+        if (y >= SCR_H - 74 && shown < started - 1) {   // no room: say how many are left out
+          snprintf(l, sizeof l, "+%d more groups started", started - shown);
+          textAt(4, y, l, C_DIM); break;
+        }
+        shown++;
+        snprintf(l, sizeof l, "Group %d: %d of %d share%s", g + 1, st.have[g] < st.need[g] ? st.have[g] : st.need[g], st.need[g], st.need[g] == 1 ? "" : "s");
+        textAt(4, y, l, st.have[g] >= st.need[g] ? C_FG : C_HI); y += 10;
+      }
+    }
+    // every share of one backup begins with the same two words (identifier and settings):
+    // shown so the right cards are easy to pick out
+    {
+      const Slip39Share& f = gShares.s[0];
+      uint32_t idexp = ((uint32_t)f.id << 5) | ((uint32_t)f.ext << 4) | f.exp;
+      snprintf(l, sizeof l, "%s %s ...", slip39_word(idexp >> 10), slip39_word(idexp & 1023));
+      textAt(4, SCR_H - 54, "Its shares all start with", C_DIM);
+      textAt(4, SCR_H - 44, l, C_HI);
+    }
+    int c;
+    do c = choiceAt(SCR_H - 30, "Type the next share", "Quit, forget shares", 0); while (c == MENU_BACK);
+    if (c == 0) continue;
+    if (c == 1) wipeSecret();                    // a timeout has wiped everything already
+    clearScreen();
+    return false;
+  }
+  if (!askPassphrase()) { wipeSecret(); return false; }
+  if (gShares.s[0].exp > 4 &&                    // Trezor uses 1 (a few seconds); each step doubles it
+      message("Slow backup", "This one was made to take", "minutes to unlock. Wait.", C_HI)) return false;
+  return deriveFromShares();
 }
 
 // ---------------- Arduino entry points ----------------
@@ -1019,21 +1367,25 @@ void setup() {
 }
 
 void loop() {
-  // 12 and 24 words cover nearly every wallet, so they stay one press away; the rare
-  // 15/18/21 sit behind "Other length" so the menu fits without scrolling.
-  static const char* const items[] = { "12-word seed", "24-word seed", "Other length", "About" };
-  static const char* const other[] = { "15-word seed", "18-word seed", "21-word seed" };
+  // Pick what is written on the backup: 12 and 24 words (BIP39, nearly every wallet, in
+  // their old places) and 20 (Trezor Safe 3 / Safe 5 / Model T and Keystone Shamir backups,
+  // SLIP-39) are one press away; the rare 15/18/21 and 33 sit behind "Other length" so the menu fits without scrolling.
+  // BIP39 has no 20- or 33-word phrases, so the count alone tells the two kinds apart.
+  static const char* const items[] = { "12 words", "24 words", "20 words", "Other length", "About" };
+  static const char* const other[] = { "15 words", "18 words", "21 words", "33 words" };
   int s = (SCR_W >= 150) ? 2 : 1;        // double-size type; 12 chars x 12 px fit the 160 px screen
-  int sel = runMenu("SeedBox", items, 4, 0, s);
+  int sel = runMenu("Backup words", items, 5, 0, s);
   switch (sel) {
-    case 0: if (enterSeed(12)) browseAddresses(); break;
-    case 1: if (enterSeed(24)) browseAddresses(); break;
-    case 2: {
-      int o = runMenu("Seed length", other, 3, 0, s);   // hold = back to the main menu
-      if (o >= 0 && enterSeed(15 + 3 * o)) browseAddresses();
+    case 0: if (runBip39(12)) browseAddresses(); break;
+    case 1: if (runBip39(24)) browseAddresses(); break;
+    case 2: if (runSlip39(20)) browseAddresses(); break;
+    case 3: {
+      int o = runMenu("Other length", other, 4, 0, s);   // hold = back to the main menu
+      if (o == 3) { if (runSlip39(33)) browseAddresses(); }
+      else if (o >= 0 && runBip39(15 + 3 * o)) browseAddresses();
       break;
     }
-    case 3: message("SeedBox v0.4", "20 chains, one-scan QR", "seed wiped after derive", C_FG); break;
+    case 4: message("SeedBox v0.5", "BIP39 12-24 words, SLIP39", "20/33 words, passphrase", C_FG); break;
     default: break;
   }
 }

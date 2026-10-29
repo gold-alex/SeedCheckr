@@ -39,8 +39,8 @@ void tc_fault_handler(const char* msg) { (void)msg; for (;;) {} }
 
 
 // ---------------- helpers ----------------
-int cu_derive(HDNode* n, const uint8_t seed[64], const char* curve, const uint32_t* path, int depth) {
-  if (!hdnode_from_seed(seed, 64, curve, n)) return -1;
+int cu_derive(HDNode* n, const SeedIn* in, const char* curve, const uint32_t* path, int depth) {
+  if (!hdnode_from_seed(in->seed, in->seedlen, curve, n)) return -1;
   for (int i = 0; i < depth; i++) if (!hdnode_private_ckd(n, path[i])) return -1;
   hdnode_fill_public_key(n);
   return 0;
@@ -135,9 +135,27 @@ void cu_xpub_record(ChainAddr* r, uint8_t type, const HDNode* node, uint32_t fp)
 
 static const char* COSMOS_HRP[] = { "cosmos", "osmo", "celestia", "dydx", "sei", "akash", "juno", "stars" };
 
+static int derive_seed(const SeedIn* in, ChainAddr* out, void (*progress)(int done, int total));
+
 int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
                void (*progress)(int done, int total)) {
   uint8_t seed[64];
+  if (progress) progress(0, chains_count());
+  mnemonic_to_seed(mnemonic, passphrase, seed, NULL);
+  SeedIn in = { seed, 64, mnemonic, passphrase };
+  int rc = derive_seed(&in, out, progress);
+  memzero(seed, sizeof seed);
+  return rc;
+}
+
+int derive_all_slip39(const uint8_t* secret, int len, ChainAddr* out,
+                      void (*progress)(int done, int total)) {
+  if (len != 16 && len != 32) return -1;
+  SeedIn in = { secret, len, NULL, "" };
+  return derive_seed(&in, out, progress);
+}
+
+static int derive_seed(const SeedIn* in, ChainAddr* out, void (*progress)(int done, int total)) {
   HDNode n, parent;
   int rc = -1, k = 0;
   if (chains_count() > CHAINS_MAX) return -1;   // every ChainAddr array is CHAINS_MAX long
@@ -145,11 +163,9 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
   for (int i = 0; i < N_CHAINS; i++) { out[i].name = CHAINS[i].name; out[i].path = CHAINS[i].path; out[i].link = CHAINS[i].link; }
   if (progress) progress(0, chains_count());
 
-  mnemonic_to_seed(mnemonic, passphrase, seed, NULL);
-
   // ---- ETH (and INJ, which is the ETH key with a bech32 wrapper) ----
   { uint32_t p[] = { 44|H, 60|H, 0|H, 0 };
-    if (cu_derive(&n, seed, SECP256K1_NAME, p, 4)) goto done;          // m/44'/60'/0'/0: MetaMask's address chain
+    if (cu_derive(&n, in, SECP256K1_NAME, p, 4)) goto done;          // m/44'/60'/0'/0: MetaMask's address chain
     cu_xpub_record(&out[0], 0x77, &n, 0);                               // the page derives accounts 2, 3, ... from it
     if (!hdnode_private_ckd(&n, 0)) goto done;
     hdnode_fill_public_key(&n);
@@ -163,7 +179,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
   //      public key can stand in for them: the four addresses ride as record 0x7B on the INJ
   //      row (the same ETH key family), 80 bytes. 3 EC multiplications each. ----
   { uint32_t p[] = { 44|H, 60|H };
-    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, in, SECP256K1_NAME, p, 2)) goto done;
     uint8_t pub65[65], h[32];
     for (uint32_t i = 1; i <= 4; i++) {
       n = parent;
@@ -177,7 +193,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- BTC zpub + first native segwit address ----
   { uint32_t p[] = { 84|H, 0|H };
-    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, in, SECP256K1_NAME, p, 2)) goto done;
     uint32_t fp = hdnode_fingerprint(&parent);
     n = parent;
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
@@ -206,7 +222,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- BTC legacy xpub ----
   { uint32_t p[] = { 44|H, 0|H };
-    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, in, SECP256K1_NAME, p, 2)) goto done;
     uint32_t fp = hdnode_fingerprint(&parent);
     n = parent;
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
@@ -220,7 +236,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- LTC native segwit ----
   { uint32_t p[] = { 84|H, 2|H };
-    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, in, SECP256K1_NAME, p, 2)) goto done;
     uint32_t fp = hdnode_fingerprint(&parent);
     n = parent;
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
@@ -235,7 +251,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- DOGE P2PKH ----
   { uint32_t p[] = { 44|H, 3|H };
-    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, in, SECP256K1_NAME, p, 2)) goto done;
     uint32_t fp = hdnode_fingerprint(&parent);
     n = parent;
     if (!hdnode_private_ckd(&n, 0|H)) goto done;
@@ -249,7 +265,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- SOL (SLIP-10 ed25519, Phantom/Solflare default path) ----
   { uint32_t p[] = { 44|H, 501|H, 0|H, 0|H };
-    if (cu_derive(&n, seed, ED25519_NAME, p, 4)) goto done;
+    if (cu_derive(&n, in, ED25519_NAME, p, 4)) goto done;
     size_t sz = CHAIN_ADDR_MAX; b58enc(out[6].addr, &sz, n.public_key + 1, 32);
     memcpy(out[6].raw, n.public_key + 1, 32); out[6].rawlen = 32;
     k = 7; if (progress) progress(k, chains_count()); }
@@ -258,14 +274,14 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
   //      so the four public keys ride as record 0x7C (128 bytes) on the SOL row. ----
   { for (uint32_t i = 1; i <= 4; i++) {
       uint32_t p[] = { 44|H, 501|H, i|H, 0|H };
-      if (cu_derive(&n, seed, ED25519_NAME, p, 4)) goto done;
+      if (cu_derive(&n, in, ED25519_NAME, p, 4)) goto done;
       memcpy(out[6].xraw + 32 * (i - 1), n.public_key + 1, 32);
     }
     out[6].xlen = 128; out[6].ext2 = 0x7C; }
 
   // ---- TRX ----
   { uint32_t p[] = { 44|H, 195|H, 0|H, 0, 0 };
-    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    if (cu_derive(&n, in, SECP256K1_NAME, p, 5)) goto done;
     uint8_t raw[21]; raw[0] = 0x41; cu_eth_addr_bytes(&n, raw + 1);
     base58_encode_check(raw, 21, HASHER_SHA2D, out[7].addr, CHAIN_ADDR_MAX);
     memcpy(out[7].raw, raw + 1, 20); out[7].rawlen = 20;
@@ -273,7 +289,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- Cosmos family: one key, many prefixes ----
   { uint32_t p[] = { 44|H, 118|H, 0|H, 0, 0 };
-    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    if (cu_derive(&n, in, SECP256K1_NAME, p, 5)) goto done;
     uint8_t pkh[20]; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, pkh);
     for (int i = 0; i < 8; i++) {
       cu_bech32_bytes(COSMOS_HRP[i], pkh, 20, out[8 + i].addr);
@@ -283,7 +299,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- XRP ----
   { uint32_t p[] = { 44|H, 144|H, 0|H, 0, 0 };
-    if (cu_derive(&n, seed, SECP256K1_NAME, p, 5)) goto done;
+    if (cu_derive(&n, in, SECP256K1_NAME, p, 5)) goto done;
     uint8_t raw[21]; raw[0] = 0x00; ecdsa_get_pubkeyhash(n.public_key, HASHER_SHA2_RIPEMD, raw + 1);
     base58_encode_check(raw, 21, HASHER_SHA2D, out[17].addr, CHAIN_ADDR_MAX);
     xrp_remap(out[17].addr);
@@ -292,7 +308,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- SUI: blake2b-256(0x00 || pubkey) ----
   { uint32_t p[] = { 44|H, 784|H, 0|H, 0|H, 0|H };
-    if (cu_derive(&n, seed, ED25519_NAME, p, 5)) goto done;
+    if (cu_derive(&n, in, ED25519_NAME, p, 5)) goto done;
     uint8_t buf[33], h[32]; buf[0] = 0x00; memcpy(buf + 1, n.public_key + 1, 32);
     blake2b(buf, 33, h, 32);
     cu_hex_0x(h, 32, out[18].addr);
@@ -301,7 +317,7 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   // ---- APT: sha3-256(pubkey || 0x00) ----
   { uint32_t p[] = { 44|H, 637|H, 0|H, 0|H, 0|H };
-    if (cu_derive(&n, seed, ED25519_NAME, p, 5)) goto done;
+    if (cu_derive(&n, in, ED25519_NAME, p, 5)) goto done;
     uint8_t buf[33], h[32]; memcpy(buf, n.public_key + 1, 32); buf[32] = 0x00;
     sha3_256(buf, 33, h);
     cu_hex_0x(h, 32, out[19].addr);
@@ -311,22 +327,22 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
   // ---- extension groups (animated "more chains" frames) ----
   { int total = chains_count(), at = N_CHAINS;
     if (progress) progress(at, total);
-    if (ext_utxo_derive(mnemonic, seed, out + at) < 0) goto done;   at += ext_utxo_count();   if (progress) progress(at, total);
-    if (ext_cosmos_derive(mnemonic, seed, out + at) < 0) goto done; at += ext_cosmos_count(); if (progress) progress(at, total);
-    if (ext_ed_derive(mnemonic, seed, out + at) < 0) goto done;     at += ext_ed_count();     if (progress) progress(at, total);
+    if (ext_utxo_derive(in, out + at) < 0) goto done;   at += ext_utxo_count();   if (progress) progress(at, total);
+    if (ext_cosmos_derive(in, out + at) < 0) goto done; at += ext_cosmos_count(); if (progress) progress(at, total);
+    if (ext_ed_derive(in, out + at) < 0) goto done;     at += ext_ed_count();     if (progress) progress(at, total);
 
     // ---- Ledger Live accounts 6-30: m/44'/60'/5..29'/0/0, as records 0x80 of [first account
     //      number][up to 12 addresses] (accounts 6-17, 18-29, 30), riding on the ETC, Celo and
     //      Harmony rows (ETH-style rows whose second slot is free; the page reads records by
     //      type). 75 more EC multiplications. ----
     uint32_t p[] = { 44|H, 60|H };
-    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    if (cu_derive(&parent, in, SECP256K1_NAME, p, 2)) goto done;
     static const uint8_t carriers[3] = { 0x20, 0x21, 0x22 };
     uint8_t pub65[65], h[32];
     for (int g = 0, acct = 6; g < 3; g++) {
       ChainAddr* r = NULL;
       for (int i = N_CHAINS; i < total; i++) if (out[i].ext == carriers[g] && !out[i].ext2) r = &out[i];
-      if (!r) goto done;
+      if (!r) break;                         // no carrier row: those accounts are not sent, the rest still is
       r->xraw[0] = (uint8_t)acct; r->xlen = 1; r->ext2 = 0x80;
       for (int k = 0; k < 12 && acct <= 30; k++, acct++) {
         n = parent;
@@ -341,7 +357,6 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
 
   rc = 0;
 done:
-  memzero(seed, sizeof seed);
   memzero(&n, sizeof n);
   memzero(&parent, sizeof parent);
   return rc;

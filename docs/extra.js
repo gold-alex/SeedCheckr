@@ -696,7 +696,10 @@
         //      gathered into one cell (built below, once every record is read) ----
         case 0x80: {
           if (b.length < 21 || (b.length - 1) % 20) break;
-          for (let k = 0; k * 20 + 1 < b.length; k++) ledgerMore.push({ n: b[0] + k, addr: eip55(b.slice(1 + 20 * k, 21 + 20 * k)) });
+          for (let k = 0; k * 20 + 1 < b.length; k++) {
+            const n = b[0] + k;
+            if (n >= 6 && !ledgerMore.some((x) => x.n === n)) ledgerMore.push({ n, addr: eip55(b.slice(1 + 20 * k, 21 + 20 * k)) });
+          }
           break;
         }
         default: break;   // a newer device's record type; skipped by design

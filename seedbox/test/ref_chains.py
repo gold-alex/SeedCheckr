@@ -1,7 +1,6 @@
 # Reference derivation with bip_utils, printed in the same "name|addr" format as test_chains.
 import sys, bip_utils as b
-m = sys.argv[1]
-seed = b.Bip39SeedGenerator(m).Generate()
+from ref_seed import m, pw, seed, cardano_root
 def b44(coin): return b.Bip44.FromSeed(seed, coin).Purpose().Coin().Account(0).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress()
 def b84(coin): return b.Bip84.FromSeed(seed, coin).Purpose().Coin().Account(0).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress()
 C = b.Bip44Coins

@@ -6,8 +6,18 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     python3 -c "import os;from mnemonic import Mnemonic as M;m=M('english');[print(e.hex(),m.to_mnemonic(e)) for n in (16,20,24,28,32) for e in [os.urandom(n) for _ in range(100)]]" > vectors.txt
     g++ -std=c++17 -O2 -o test_seedcore test_seedcore.cpp && ./test_seedcore < vectors.txt
 
-    # chains: every address vs bip_utils, N random mnemonics of each length (12/15/18/21/24 words)
+    # chains: every address vs bip_utils, N random mnemonics of each length (12/15/18/21/24 words),
+    # each also with a random passphrase, plus N random SLIP-39 master secrets of 16 and 32 bytes
     ./compare.sh 10             # or PYTHON=/path/to/venv/bin/python ./compare.sh 10
+
+    # SLIP-39 (src/slip39.c via test_slip39): the 45 official vectors (vectors.json, from
+    # python-shamir-mnemonic) and N random backups made by that library; pip install shamir-mnemonic
+    PYTHON=/path/to/venv/bin/python node verify_slip39.js 40
+
+    # the device's UI on the PC (sim/: framebuffer screen, scripted knob): whole recoveries, BIP39 with
+    # a passphrase and SLIP-39 backups of several shares and groups, addresses vs test_chains.
+    # SHOTS=/some/dir keeps a PNG of every step. Needs zlib.
+    PYTHON=/path/to/venv/bin/python node verify_ui.js
 
     # one-scan QR, end to end: device payload -> docs/decode.js -> the same 20 addresses,
     # then URL + payload -> the device's QR encoder -> jsQR (an unrelated reader) -> the same URL

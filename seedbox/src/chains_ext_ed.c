@@ -120,16 +120,28 @@ static void card_ckd(CardNode* n, uint32_t idx) {
   memzero(buf, sizeof buf); memzero(z, sizeof z); memzero(ch, sizeof ch); memzero(nk, sizeof nk);
 }
 
-// Icarus master key from the BIP39 entropy, empty passphrase
-static int card_master(const char* mnemonic, CardNode* n) {
+// Cardano master key. BIP39: Icarus, from the entropy with the passphrase as the PBKDF2
+// password ("" when there is none, as in Yoroi, Eternl and Lace). SLIP-39 (no mnemonic): SLIP-0023 from
+// the master secret, as Trezor does for its 20- and 33-word backups.
+static int card_master(const SeedIn* in, CardNode* n) {
   uint8_t ent[33], data[128];
   int rc = -1;
-  size_t bits = mnemonic_to_bits(mnemonic, ent);
+  if (!in->mnemonic) {
+    static const char KEY[] = "ed25519 cardano seed";
+    hmac_sha512((const uint8_t*)KEY, sizeof KEY - 1, in->seed, in->seedlen, data);   // I = IL || IR
+    sha512_Raw(data, 32, data + 64);                                                  // k = SHA-512(IL)
+    data[64] &= 0xF8; data[95] &= 0x1F; data[95] |= 0x40;
+    memcpy(n->k, data + 64, 64); memcpy(n->c, data + 32, 32);                         // c = IR
+    ed25519_publickey_ext(n->k, n->pub);
+    rc = 0;
+    goto out;
+  }
+  size_t bits = mnemonic_to_bits(in->mnemonic, ent);
   if (bits == 0 || bits % 33) goto out;
   size_t entlen = bits * 32 / 33 / 8;
   PBKDF2_HMAC_SHA512_CTX pc;
   for (uint32_t blk = 1; blk <= 2; blk++) {   // 96 bytes = two SHA-512 blocks
-    pbkdf2_hmac_sha512_Init(&pc, (const uint8_t*)"", 0, ent, entlen, blk);
+    pbkdf2_hmac_sha512_Init(&pc, (const uint8_t*)in->passphrase, strlen(in->passphrase), ent, entlen, blk);
     pbkdf2_hmac_sha512_Update(&pc, 4096);
     pbkdf2_hmac_sha512_Final(&pc, data + 64 * (blk - 1));
   }
@@ -145,15 +157,15 @@ out:
 
 // ---------------- rows ----------------
 // out_pub = real 32-byte ed25519 key at the SLIP-10 path
-static int slip10_pub(const uint8_t seed[64], const uint32_t* p, int depth, uint8_t out_pub[32]) {
+static int slip10_pub(const SeedIn* in, const uint32_t* p, int depth, uint8_t out_pub[32]) {
   HDNode n;
-  int rc = cu_derive(&n, seed, ED25519_NAME, p, depth);
+  int rc = cu_derive(&n, in, ED25519_NAME, p, depth);
   if (!rc) memcpy(out_pub, n.public_key + 1, 32);
   memzero(&n, sizeof n);
   return rc;
 }
 
-int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) {
+int ext_ed_derive(const SeedIn* in, ChainAddr* out) {
   uint8_t pub[32];
   CardNode acct, leaf;
   int rc = -1;
@@ -161,7 +173,7 @@ int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) 
 
   // 0x50 Solana m/44'/501'/0'
   { uint32_t p[] = { 44|H, 501|H, 0|H };
-    if (slip10_pub(seed, p, 3, pub)) goto done;
+    if (slip10_pub(in, p, 3, pub)) goto done;
     cu_row(&out[0], "SOL Ledger/Trust", "m/44'/501'/0'", "https://solscan.io/account/%s", 0x50);
     sz = CHAIN_ADDR_MAX; b58enc(out[0].addr, &sz, pub, 32);
     memcpy(out[0].raw, pub, 32); out[0].rawlen = 32;
@@ -169,21 +181,21 @@ int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) 
     // ride as record 0x7E (128 bytes) on this row
     for (uint32_t i = 1; i <= 4; i++) {
       uint32_t q[] = { 44|H, 501|H, i|H };
-      if (slip10_pub(seed, q, 3, pub)) goto done;
+      if (slip10_pub(in, q, 3, pub)) goto done;
       memcpy(out[0].xraw + 32 * (i - 1), pub, 32);
     }
     out[0].xlen = 128; out[0].ext2 = 0x7E; }
 
   // 0x51 Solana m/44'/501'
   { uint32_t p[] = { 44|H, 501|H };
-    if (slip10_pub(seed, p, 2, pub)) goto done;
+    if (slip10_pub(in, p, 2, pub)) goto done;
     cu_row(&out[1], "SOL root (old)", "m/44'/501'", "https://solscan.io/account/%s", 0x51);
     sz = CHAIN_ADDR_MAX; b58enc(out[1].addr, &sz, pub, 32);
     memcpy(out[1].raw, pub, 32); out[1].rawlen = 32; }
 
   // 0x52 Stellar: StrKey G...
   { uint32_t p[] = { 44|H, 148|H, 0|H };
-    if (slip10_pub(seed, p, 3, pub)) goto done;
+    if (slip10_pub(in, p, 3, pub)) goto done;
     cu_row(&out[2], "Stellar XLM", "m/44'/148'/0'", "https://stellar.expert/explorer/public/account/%s", 0x52);
     uint8_t b[35]; b[0] = 6 << 3; memcpy(b + 1, pub, 32);
     uint16_t c = crc16_xmodem(b, 33); b[33] = c & 0xff; b[34] = c >> 8;
@@ -192,7 +204,7 @@ int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) 
 
   // 0x53 Tezos tz1: base58check(06 a1 9f || blake2b-160(pub))
   { uint32_t p[] = { 44|H, 1729|H, 0|H, 0|H };
-    if (slip10_pub(seed, p, 4, pub)) goto done;
+    if (slip10_pub(in, p, 4, pub)) goto done;
     cu_row(&out[3], "Tezos tz1", "m/44'/1729'/0'/0'", "https://tzkt.io/%s", 0x53);
     uint8_t b[23] = { 0x06, 0xa1, 0x9f };
     blake2b(pub, 32, b + 3, 20);
@@ -201,14 +213,14 @@ int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) 
 
   // 0x54 NEAR implicit account: hex(pub)
   { uint32_t p[] = { 44|H, 397|H, 0|H };
-    if (slip10_pub(seed, p, 3, pub)) goto done;
+    if (slip10_pub(in, p, 3, pub)) goto done;
     cu_row(&out[4], "NEAR", "m/44'/397'/0'", "https://nearblocks.io/address/%s", 0x54);
     hex_plain(pub, 32, out[4].addr);
     memcpy(out[4].raw, pub, 32); out[4].rawlen = 32; }
 
   // 0x55 Algorand: base32(pub || sha512_256(pub)[28..32])
   { uint32_t p[] = { 44|H, 283|H, 0|H, 0|H, 0|H };
-    if (slip10_pub(seed, p, 5, pub)) goto done;
+    if (slip10_pub(in, p, 5, pub)) goto done;
     cu_row(&out[5], "Algorand", "m/44'/283'/0'/0'/0'", "https://allo.info/account/%s", 0x55);
     uint8_t b[36], h[32]; memcpy(b, pub, 32);
     sha512_256(pub, 32, h); memcpy(b + 32, h + 28, 4);
@@ -217,21 +229,21 @@ int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) 
 
   // 0x56 MultiversX erd1...
   { uint32_t p[] = { 44|H, 508|H, 0|H, 0|H, 0|H };
-    if (slip10_pub(seed, p, 5, pub)) goto done;
+    if (slip10_pub(in, p, 5, pub)) goto done;
     cu_row(&out[6], "MultiversX EGLD", "m/44'/508'/0'/0'/0'", "https://explorer.multiversx.com/accounts/%s", 0x56);
     cu_bech32_bytes("erd", pub, 32, out[6].addr);
     memcpy(out[6].raw, pub, 32); out[6].rawlen = 32; }
 
   // 0x57 Hedera: public key (account id is assigned on chain; the page looks it up)
   { uint32_t p[] = { 44|H, 3030|H, 0|H, 0|H, 0|H };
-    if (slip10_pub(seed, p, 5, pub)) goto done;
+    if (slip10_pub(in, p, 5, pub)) goto done;
     cu_row(&out[7], "Hedera HBAR", "m/44'/3030'/0'/0'/0'", NULL, 0x57);
     hex_plain(pub, 32, out[7].addr);
     memcpy(out[7].raw, pub, 32); out[7].rawlen = 32; }
 
   // 0x58 IOTA (rebased): 0x || blake2b-256(0x00 || pub)
   { uint32_t p[] = { 44|H, 4218|H, 0|H, 0|H, 0|H };
-    if (slip10_pub(seed, p, 5, pub)) goto done;
+    if (slip10_pub(in, p, 5, pub)) goto done;
     cu_row(&out[8], "IOTA", "m/44'/4218'/0'/0'/0'", "https://explorer.iota.org/address/%s", 0x58);
     uint8_t b[33], h[32]; b[0] = 0x00; memcpy(b + 1, pub, 32);
     blake2b(b, 33, h, 32);
@@ -240,13 +252,13 @@ int ext_ed_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) 
 
   // 0x59 TON (Trust Wallet path): public key; the page computes the wallet contract address
   { uint32_t p[] = { 44|H, 607|H, 0|H };
-    if (slip10_pub(seed, p, 3, pub)) goto done;
+    if (slip10_pub(in, p, 3, pub)) goto done;
     cu_row(&out[9], "TON (Trust path)", "m/44'/607'/0'", NULL, 0x59);
     hex_plain(pub, 32, out[9].addr);
     memcpy(out[9].raw, pub, 32); out[9].rawlen = 32; }
 
-  // 0x60 Cardano Shelley base address (Icarus master key, CIP-1852)
-  { if (card_master(mnemonic, &acct)) goto done;
+  // 0x60 Cardano Shelley base address (Icarus or SLIP-0023 master key, CIP-1852)
+  { if (card_master(in, &acct)) goto done;
     card_ckd(&acct, 1852|H); card_ckd(&acct, 1815|H); card_ckd(&acct, 0|H);
     uint8_t b[57]; b[0] = 0x01;
     leaf = acct; card_ckd(&leaf, 0); card_ckd(&leaf, 0);

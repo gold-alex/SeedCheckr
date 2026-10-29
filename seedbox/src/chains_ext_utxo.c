@@ -213,11 +213,10 @@ static int fill(const UtxoRow* d, const HDNode* n, ChainAddr* r) {
 
 // Fills ext_utxo_count() rows. Returns 0 on success, -1 on failure.
 // Zero every HDNode / private buffer before returning.
-int ext_utxo_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) {
-  (void)mnemonic;
+int ext_utxo_derive(const SeedIn* in, ChainAddr* out) {
   HDNode p44, p49, p86, n;
   int rc = -1;
-  if (!hdnode_from_seed(seed, 64, SECP256K1_NAME, &p44)) goto done;
+  if (!hdnode_from_seed(in->seed, in->seedlen, SECP256K1_NAME, &p44)) goto done;
   p49 = p44; p86 = p44;
   if (!hdnode_private_ckd(&p44, 44|H) || !hdnode_private_ckd(&p49, 49|H) || !hdnode_private_ckd(&p86, 86|H)) goto done;
   for (int i = 0; i < N_ROWS; i++) {

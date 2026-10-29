@@ -404,11 +404,20 @@
     // receive-only account has no transactions anywhere), so it counts as used
     const mm = fetchJSON('https://accounts.api.cx.metamask.io/v4/multiaccount/balances?networks=' + ids.join(',') + '&accountAddresses=' + ids.map((i) => 'eip155:' + i + ':' + addr).join(','), undefined, 20000)
       .then((j) => !Array.isArray(j.balances) || (j.unprocessedNetworks || []).length > 0 || j.balances.some((b) => Number(b.balance) > 0), () => true);
-    const sent = BIG_EVM.map((k) => EVM.find((c) => c.key === k)).map((c) => firstOk(c.rpcs, (u) => rpc(u, 'eth_getTransactionCount', [addr, 'latest'])).then((n) => BigInt(n) > 0n, () => false));
-    return (await Promise.all([mm].concat(sent))).some(Boolean);
+    // a network whose transaction count could not be read is a gap, said under the row
+    const missed = [];
+    const sent = BIG_EVM.map((k) => EVM.find((c) => c.key === k)).map((c) => firstOk(c.rpcs, (u) => rpc(u, 'eth_getTransactionCount', [addr, 'latest']).then(hexCount))
+      .then((n) => n > 0n, () => { missed.push(c.name); return false; }));
+    const used = (await Promise.all([mm].concat(sent))).some(Boolean);
+    return { used, missed };
   }
+  const hexCount = (x) => { if (typeof x !== 'string' || !/^0x[0-9a-f]+$/i.test(x)) throw new Error('unexpected answer'); return BigInt(x); };
   async function checkEvmAccount(addr, knownUsed) {
-    if (!knownUsed && !(await evmUsed(addr))) return { holdings: [h('ETH', 0, 'ethereum')], others: 0, partial: null, note: 'never used: no transaction on the ' + BIG_EVM.length + ' biggest networks, nothing on MetaMask\'s' };
+    if (!knownUsed) {
+      const u = await evmUsed(addr);
+      if (!u.used) return { holdings: [h('ETH', 0, 'ethereum')], others: 0, partial: u.missed.length ? 'use not tested on ' + u.missed.join(', ') : null,
+        note: 'never used: no transaction on the ' + (BIG_EVM.length - u.missed.length) + ' biggest networks that answered, nothing on MetaMask\'s' };
+    }
     const rs = await Promise.allSettled(EVM.map((c) => checkEvm(c, addr, { extra: true })));
     const holdings = [], partly = [];
     let failed = 0, others = 0;
@@ -426,12 +435,19 @@
   // requests, not 11 an account. Each of the ten biggest networks gets one JSON-RPC batch of
   // nonce and balance for every address; MetaMask's balances call takes 10 addresses at a time
   // (more make the URL too long). Only the used ones are then checked on every network.
+  // dRPC's free tier takes batches of 3 at most (publicnode takes 50 and more), so its
+  // batches go 3 calls at a time; every answer must be a hex number, as a count or balance is
   async function rpcBatch(url, calls) {
-    const j = await fetchJSON(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(calls.map(([method, params], id) => ({ jsonrpc: '2.0', id, method, params }))) });
-    const byId = new Map((Array.isArray(j) ? j : []).map((x) => [x.id, x.result]));
-    // a server that refuses batches, or answers only some (mainnet.base.org), is no answer
-    if (calls.some((c, i) => typeof byId.get(i) !== 'string')) throw new Error('batch not answered');
-    return calls.map((c, i) => byId.get(i));
+    const size = /drpc\.org/.test(url) ? 3 : calls.length;
+    const out = [];
+    for (let i = 0; i < calls.length; i += size) {
+      const part = calls.slice(i, i + size);
+      const j = await fetchJSON(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(part.map(([method, params], id) => ({ jsonrpc: '2.0', id, method, params }))) });
+      const byId = new Map((Array.isArray(j) ? j : []).map((x) => [x.id, x.result]));
+      // a server that refuses batches, or answers only some (mainnet.base.org), is no answer
+      for (let k = 0; k < part.length; k++) out.push(hexCount(byId.get(k)));
+    }
+    return out;
   }
   async function checkEvmAccounts(accts) {
     const used = new Set(), gaps = [], mmGaps = [];
@@ -440,7 +456,7 @@
     for (let i = 0; i < accts.length; i += 10) parts.push(accts.slice(i, i + 10));
     await Promise.all(BIG_EVM.map((k) => EVM.find((c) => c.key === k)).map((c) =>
       firstOk(c.rpcs, (u) => rpcBatch(u, accts.flatMap((a) => [['eth_getTransactionCount', [a.addr, 'latest']], ['eth_getBalance', [a.addr, 'latest']]])))
-        .then((r) => { answered++; accts.forEach((a, i) => { if (BigInt(r[2 * i]) > 0n || BigInt(r[2 * i + 1]) > 0n) used.add(a); }); }, () => gaps.push(c.name)))
+        .then((r) => { answered++; accts.forEach((a, i) => { if (r[2 * i] > 0n || r[2 * i + 1] > 0n) used.add(a); }); }, () => gaps.push(c.name)))
       .concat(parts.map(async (part) => {
         const which = 'accounts ' + part[0].n + '-' + part[part.length - 1].n;
         try {

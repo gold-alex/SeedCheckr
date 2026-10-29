@@ -43,11 +43,10 @@ int ext_cosmos_count(void) { return N_ROWS; }
 // Fills ext_cosmos_count() rows. Returns 0 on success, -1 on failure.
 // m/44' is derived once and every row branches from it (hardened steps cost only an
 // HMAC; the two soft steps and the final public key are 3 EC multiplications per row).
-int ext_cosmos_derive(const char* mnemonic, const uint8_t seed[64], ChainAddr* out) {
-  (void)mnemonic;
+int ext_cosmos_derive(const SeedIn* in, ChainAddr* out) {
   HDNode root, n;
   int rc = -1;
-  if (!hdnode_from_seed(seed, 64, SECP256K1_NAME, &root)) goto done;
+  if (!hdnode_from_seed(in->seed, in->seedlen, SECP256K1_NAME, &root)) goto done;
   if (!hdnode_private_ckd(&root, 44 | H)) goto done;
 
   for (int i = 0; i < N_ROWS; i++) {

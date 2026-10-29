@@ -3,8 +3,7 @@
 import sys
 import bip_utils as b
 
-m = sys.argv[1]; pw = sys.argv[2] if len(sys.argv) > 2 else ""
-seed = b.Bip39SeedGenerator(m).Generate(pw)
+from ref_seed import m, pw, seed, cardano_root
 C = b.Bip44Coins
 
 def b44(coin):

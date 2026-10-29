@@ -2,8 +2,7 @@
 # SLIP-10 keys come from bip_utils' Bip32Slip10Ed25519; where bip_utils has the coin, its
 # Bip44 address is used and checked against the generic derivation. Cardano uses Cip1852 Icarus.
 import sys, hashlib, bip_utils as b
-m = sys.argv[1]
-seed = b.Bip39SeedGenerator(m).Generate()
+from ref_seed import m, pw, seed, cardano_root
 C = b.Bip44Coins
 
 def pub(path):
@@ -38,8 +37,8 @@ rows.append(("Hedera HBAR", pub("m/44'/3030'/0'/0'/0'").hex()))
 rows.append(("IOTA", "0x" + hashlib.blake2b(b"\x00" + pub("m/44'/4218'/0'/0'/0'"), digest_size=32).hexdigest()))
 rows.append(("TON (Trust path)", pub("m/44'/607'/0'").hex()))
 
-ent = b.CardanoIcarusSeedGenerator(m).Generate()
-acct = b.Cip1852.FromSeed(ent, b.Cip1852Coins.CARDANO_ICARUS).Purpose().Coin().Account(0)
+k, c = cardano_root()
+acct = b.Cip1852.FromPrivateKey(k, b.Cip1852Coins.CARDANO_ICARUS, b.Bip32KeyData(chain_code=c)).Purpose().Coin().Account(0)
 sh = b.CardanoShelley.FromCip1852Object(acct).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0)
 rows.append(("Cardano ADA", sh.PublicKeys().ToAddress()))
 
