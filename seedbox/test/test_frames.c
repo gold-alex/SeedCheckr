@@ -8,6 +8,7 @@
 //   BYTES|<hex of the extension bytes>
 //   COUNT|<n>
 //   FRAME|<text>             one line per frame, 1..n
+//   FOUNT|<text>             fountain frames n+1..9n (the device's first four loops' worth)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,8 +46,13 @@ int main(void) {
     if (portfolio_frame_text(rows, n, i, text, sizeof text) < 0) { printf("ERR frame %d\n", i); return 1; }
     printf("FRAME|%s\n", text);
   }
+  for (int i = count + 1; count && i <= 9 * count; i++) {
+    char text[PORTFOLIO_FRAME_TEXT_MAX];
+    if (portfolio_frame_text(rows, n, i, text, sizeof text) < 0) { printf("ERR frame %d\n", i); return 1; }
+    printf("FOUNT|%s\n", text);
+  }
   char t[PORTFOLIO_FRAME_TEXT_MAX];
-  if (portfolio_frame_text(rows, n, 0, t, sizeof t) >= 0 || portfolio_frame_text(rows, n, count + 1, t, sizeof t) >= 0) {
+  if (portfolio_frame_text(rows, n, 0, t, sizeof t) >= 0 || portfolio_frame_text(rows, n, PORTFOLIO_FRAME_MAX + 1, t, sizeof t) >= 0) {
     printf("ERR out-of-range frame accepted\n"); return 1;
   }
   free(e);

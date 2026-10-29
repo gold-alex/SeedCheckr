@@ -48,7 +48,9 @@ bool portfolio_qr(const char* url_prefix, const char* payload,
 //   SB2 <i> <n> <CRC-32 of all records, 8 hex> <base43 of 0x01 || chunk>
 // Nothing is buffered: each call walks the rows again (a few KB at most).
 #define PORTFOLIO_FRAME_CHUNK     240
-#define PORTFOLIO_FRAME_TEXT_MAX  400   // "SB2 999 999 XXXXXXXX " + 356 base43 chars + NUL
+#define PORTFOLIO_FRAME_TEXT_MAX  400   // "SB2 999 999 XXXXXXXX " + 360 base43 chars + NUL
+#define PORTFOLIO_FRAME_MAX       999   // highest frame number (fountain frames go up to it)
+#define PORTFOLIO_FRAMES_MAX      64    // most chunks a set may have (the page's limit too)
 
 // The extension bytes. out == NULL: just returns their length.
 // Returns the length, or -1 if cap is too small.
@@ -57,9 +59,16 @@ int portfolio_ext_bytes(const ChainAddr* rows, int n, uint8_t* out, int cap);
 // Number of frames, 0 when no row has ext set.
 int portfolio_frame_count(const ChainAddr* rows, int n);
 
-// Text of frame i, 1-based (1..portfolio_frame_count()), as the spec numbers them.
+// Text of frame i, 1-based, as the spec numbers them. 1..portfolio_frame_count() are the
+// chunks themselves; i above that is a fountain frame, the XOR of the chunks
+// portfolio_fountain_mask() picks for i, so a reader that missed some chunks can rebuild
+// them from whichever frames it did read.
 // Returns the string length, or -1 if i is out of range or cap is too small.
 int portfolio_frame_text(const ChainAddr* rows, int n, int i, char* out, int cap);
+
+// Which of the total chunks fountain frame i combines: mask[j] = 1 if chunk j+1 is in it.
+// xorshift32 seeded from i, one bit per chunk (docs/EXTENSIONS.md has the exact steps).
+void portfolio_fountain_mask(int i, int total, uint8_t* mask);
 
 // One frame as a QR: alphanumeric mode, ECC L (raised if it fits the same version),
 // smallest version <= max_version. temp and qrcode must each be

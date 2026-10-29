@@ -22,14 +22,35 @@ Frame `i` (1-based) is one QR, alphanumeric mode only, ECC L, version 1-11:
 
     SB2 <i> <n> <CRC> <DATA>
 
-- `<i>`, `<n>`: decimal.
+- `<i>`: decimal, 1 to 999. `<n>`: decimal, the number of chunks (at most 64), on every
+  frame, so the first frame read tells the page how many it needs.
 - `<CRC>`: CRC-32 (IEEE 802.3, same as zlib.crc32) of all of `E`, 8 uppercase hex
   digits. Frames from a different scan or seed never mix.
 - `<DATA>`: base43 (alphabet `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$*+-./:`, same as
-  the Portfolio QR) of `0x01 || chunk`. The leading 0x01 keeps leading zero bytes.
+  the Portfolio QR) of
+  - `i <= n` (chunk frame): `0x01 || chunk i`. The leading 0x01 keeps leading zero bytes.
+  - `i > n` (fountain frame): `0x02 || len(E), 2 bytes big endian || X`, where X (240
+    bytes) is the XOR of the chunks the mask of `i` picks, each zero padded to 240 bytes.
 
 Spaces are legal in QR alphanumeric mode and never appear in base43, so the five
 fields split on single spaces.
+
+### Fountain frames
+
+The mask of fountain frame `i` for `n` chunks, as `seedbox/src/portfolio.c` and
+`docs/scan.js` compute it (32-bit unsigned arithmetic):
+
+    s = (i * 0x9E3779B1) XOR 0x5EED5EED;  if s == 0: s = 1
+    for j = 0 .. n-1:  s ^= s << 13;  s ^= s >> 17;  s ^= s << 5;  chunk j+1 is in the mask if s >> 31 == 1
+    if no chunk is in it: chunk ((i-1) mod n) + 1
+
+The device loops the `n` chunk frames, then `2n` fountain frames, with new fountain
+numbers each loop (n+1 upward, back to n+1 after 999). The page treats every frame as
+one equation over GF(2) and keeps them in reduced row echelon form: a frame that adds
+nothing new is a duplicate, and once `n` are independent each row is one chunk. A phone
+that missed a chunk rebuilds it from whatever it reads next rather than waiting a whole
+loop for it; `verify_frames.js` measures under one frame past `n` on average. Pages
+from before fountain frames reject `i > n` and still finish from the chunk frames.
 
 ## Record types
 

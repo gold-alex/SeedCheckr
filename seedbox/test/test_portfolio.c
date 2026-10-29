@@ -7,6 +7,7 @@
 //   <name>|<addr>            one line per chain row, as test_chains prints them
 //   BTC legacy addr 1|1...   first m/44'/0'/0'/0/0 address (raw-only on the device)
 //   FRAME|SB2 ...            the "more chains" frames, if any row has ext set
+//   FOUNT|SB2 ...            then the device's first loop of fountain frames (n+1..3n)
 #include <stdio.h>
 #include <string.h>
 #include "../src/chains.h"
@@ -32,6 +33,11 @@ int main(int argc, char** argv) {
     char ft[PORTFOLIO_FRAME_TEXT_MAX];
     if (portfolio_frame_text(out, chains_count(), f, ft, sizeof ft) < 0) { printf("ERR frame %d\n", f); return 1; }
     printf("FRAME|%s\n", ft);
+  }
+  for (int f = frames + 1; frames && f <= 3 * frames; f++) {   // the first loop's fountain frames
+    char ft[PORTFOLIO_FRAME_TEXT_MAX];
+    if (portfolio_frame_text(out, chains_count(), f, ft, sizeof ft) < 0) { printf("ERR frame %d\n", f); return 1; }
+    printf("FOUNT|%s\n", ft);
   }
   return 0;
 }

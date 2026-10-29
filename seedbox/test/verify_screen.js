@@ -132,21 +132,37 @@ const wideTypical = decodeRate(rows[0][1], 'typical, wide view (after two misses
 // ---- timing ----
 console.log('\n### time to collect all ' + frames.length + ' frames (Monte Carlo, 2000 runs each)');
 const typical = res['typical: 11-13 cm, steady, in focus'];
-function sim(T, D, p, pWide, decodeMs, runs) {
+// The device's sequence (seedbox.ino moreFrameAt): the n chunks, then 2n fountain frames
+// with fresh numbers each loop. fountain = false: the old loop of the n chunks alone.
+const S = require('../../docs/scan.js');
+function frameAt(pos, n, fountain) {
+  if (!fountain) return pos % n + 1;
+  const loop = Math.floor(pos / (3 * n)), k = pos % (3 * n);
+  return k < n ? k + 1 : n + 1 + (loop * 2 * n + (k - n)) % (999 - n);
+}
+const maskOf = (i, n) => i <= n ? 1 << (i - 1) : S.fountainMask(i, n).reduce((m, b, j) => m | (b << j), 0);   // n < 31
+function sim(T, D, p, pWide, decodeMs, runs, fountain) {
   let r = 99; const rnd = () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296);
-  const n = frames.length, times = [];
+  const n = frames.length, times = [], span = T * n * (fountain ? 3 : 1);
   for (let k = 0; k < runs; k++) {
-    let t = rnd() * T * n, got = new Set(), guard = 0, misses = 0;   // the user starts at a random point in the loop
-    while (got.size < n && guard++ < 100000) {
-      const cycle = t % (T * n), idx = Math.floor(cycle / T), into = cycle - idx * T;
+    // the user starts at a random point in the loop; got: XOR basis of what was read (rank = chunks known)
+    const t0 = rnd() * span;
+    let t = t0, guard = 0, misses = 0, rank = 0;
+    const basis = new Array(n).fill(0);
+    while (rank < n && guard++ < 100000) {
+      const pos = Math.floor(t / T), into = t - pos * T;
       const exposure = 16;                               // ms the sensor integrates one frame
       const clean = into >= D + exposure || into < 0;    // a capture spanning the redraw sees two codes
       const wide = misses % 3 === 2;                     // the scanner's wide view after two misses
       const hit = clean && rnd() < (wide ? pWide : p);
-      if (hit) { got.add(idx); misses = 0; } else misses++;
+      if (hit) {
+        let m = maskOf(frameAt(pos, n, fountain), n);
+        for (let j = n - 1; j >= 0 && m; j--) if (m >> j & 1) { if (basis[j]) m ^= basis[j]; else { basis[j] = m; rank++; m = 0; } }
+        misses = 0;
+      } else misses++;
       t += decodeMs + 20 + rnd() * 60;                   // the page's jittered scan interval
     }
-    times.push(t);
+    times.push(t - t0);                                  // from the first look, wherever the loop was
   }
   times.sort((a, b) => a - b);
   return { med: times[runs >> 1] / 1000, p90: times[Math.floor(runs * 0.9)] / 1000 };
@@ -154,9 +170,11 @@ function sim(T, D, p, pWide, decodeMs, runs) {
 const D = 12;                                            // ms: measured on the board as "MORE i/n Xms"; 10-15 expected
 for (const phone of [{ name: 'fast phone (jsQR 2x this computer)', f: 2 }, { name: 'older phone (jsQR 5x)', f: 5 }]) {
   for (const p of [...new Set([typical.p, Math.min(typical.p, 0.6)])]) {
-    const line = [];
-    for (const T of [250, 400, 500, 700, 1000]) { const s = sim(T, D, p, wideTypical.p * (p / typical.p), typical.ms * phone.f, 2000); line.push(T + 'ms: ' + s.med.toFixed(1) + 's/' + s.p90.toFixed(1) + 's'); }
-    console.log((phone.name + ', p=' + p.toFixed(2)).padEnd(46) + line.join('  '));
+    for (const fountain of [false, true]) {
+      const line = [];
+      for (const T of [250, 400, 500, 700, 1000]) { const s = sim(T, D, p, wideTypical.p * (p / typical.p), typical.ms * phone.f, 2000, fountain); line.push(T + 'ms: ' + s.med.toFixed(1) + 's/' + s.p90.toFixed(1) + 's'); }
+      console.log((phone.name + ', p=' + p.toFixed(2) + (fountain ? ', fountain' : ', chunks only')).padEnd(60) + line.join('  '));
+    }
   }
 }
 console.log('(median / 90th percentile seconds to finish, per frame duration T; the device uses 400 ms)');

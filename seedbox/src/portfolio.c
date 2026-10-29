@@ -133,18 +133,45 @@ int portfolio_frame_count(const ChainAddr* rows, int n) {
   return (len + PORTFOLIO_FRAME_CHUNK - 1) / PORTFOLIO_FRAME_CHUNK;
 }
 
+void portfolio_fountain_mask(int i, int total, uint8_t* mask) {
+  uint32_t s = (uint32_t)i * 0x9E3779B1u ^ 0x5EED5EEDu;
+  int any = 0;
+  if (!s) s = 1;
+  for (int j = 0; j < total; j++) {
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    mask[j] = (uint8_t)(s >> 31); any |= mask[j];
+  }
+  if (!any) mask[(i - 1) % total] = 1;
+}
+
 int portfolio_frame_text(const ChainAddr* rows, int n, int i, char* out, int cap) {
-  uint8_t chunk[1 + PORTFOLIO_FRAME_CHUNK];
+  uint8_t chunk[3 + PORTFOLIO_FRAME_CHUNK];
   uint32_t crc;
-  int from = (i - 1) * PORTFOLIO_FRAME_CHUNK;
-  int len = ext_walk(rows, n, &crc, chunk + 1, from, from + PORTFOLIO_FRAME_CHUNK);
+  int len = ext_walk(rows, n, &crc, NULL, 0, 0);
   int total = (len + PORTFOLIO_FRAME_CHUNK - 1) / PORTFOLIO_FRAME_CHUNK;
-  if (i < 1 || i > total) return -1;
-  int clen = len - from < PORTFOLIO_FRAME_CHUNK ? len - from : PORTFOLIO_FRAME_CHUNK;
-  chunk[0] = 0x01;
+  if (i < 1 || i > PORTFOLIO_FRAME_MAX || total < 1 || total > PORTFOLIO_FRAMES_MAX) return -1;
+  int clen;
+  if (i <= total) {                       // source frame: chunk i as it is
+    int from = (i - 1) * PORTFOLIO_FRAME_CHUNK;
+    ext_walk(rows, n, NULL, chunk + 1, from, from + PORTFOLIO_FRAME_CHUNK);
+    chunk[0] = 0x01;
+    clen = 1 + (len - from < PORTFOLIO_FRAME_CHUNK ? len - from : PORTFOLIO_FRAME_CHUNK);
+  } else {                                // fountain frame: XOR of the chunks its mask picks,
+    uint8_t mask[PORTFOLIO_FRAMES_MAX], part[PORTFOLIO_FRAME_CHUNK];   // zero padded
+    portfolio_fountain_mask(i, total, mask);
+    memset(chunk, 0, sizeof chunk);
+    chunk[0] = 0x02; chunk[1] = (uint8_t)(len >> 8); chunk[2] = (uint8_t)len;
+    for (int j = 0; j < total; j++) {
+      if (!mask[j]) continue;
+      memset(part, 0, sizeof part);
+      ext_walk(rows, n, NULL, part, j * PORTFOLIO_FRAME_CHUNK, (j + 1) * PORTFOLIO_FRAME_CHUNK);
+      for (int k = 0; k < PORTFOLIO_FRAME_CHUNK; k++) chunk[3 + k] ^= part[k];
+    }
+    clen = 3 + PORTFOLIO_FRAME_CHUNK;
+  }
   int h = snprintf(out, cap, "SB2 %d %d %08lX ", i, total, (unsigned long)crc);
   if (h < 0 || h >= cap) return -1;
-  int d = base43_encode(chunk, 1 + clen, out + h, cap - h);
+  int d = base43_encode(chunk, clen, out + h, cap - h);
   return d < 0 ? -1 : h + d;
 }
 

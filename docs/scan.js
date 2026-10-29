@@ -48,33 +48,61 @@
   }
 
   // ---- frames ----
-  // "SB2 <i> <n> <CRC> <DATA>" -> { i, n, crc, chunk }, or null if the text is not a
-  // well formed frame (another QR, a misread, a chunk of the wrong size).
-  const MAX_FRAMES = 64;   // 64 x 240 bytes is far beyond any SeedBox (today 6 frames)
+  // "SB2 <i> <n> <CRC> <DATA>" -> { i, n, crc, mask, data, len }, or null if the text is not
+  // a well formed frame (another QR, a misread, a chunk of the wrong size).
+  // i <= n: chunk i itself (DATA = 0x01 || chunk). i > n: a fountain frame, the XOR of the
+  // chunks fountainMask(i, n) picks, each zero padded to 240 bytes (DATA = 0x02 || length of
+  // all the bytes, 2 bytes || XOR). mask: which chunks it holds; data: 240 bytes, padded;
+  // len: the total length when the frame tells it, else null.
+  const MAX_FRAMES = 64, MAX_INDEX = 999;   // a foreign QR must not make us allocate millions of slots
+  function fountainMask(i, n) {
+    let s = (Math.imul(i, 0x9E3779B1) ^ 0x5EED5EED) >>> 0, any = false;
+    if (!s) s = 1;
+    const mask = new Uint8Array(n);
+    for (let j = 0; j < n; j++) {
+      s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0;
+      mask[j] = s >>> 31; any = any || !!mask[j];
+    }
+    if (!any) mask[(i - 1) % n] = 1;
+    return mask;
+  }
   function parseFrame(text) {
     if (typeof text !== 'string') return null;
     const m = FRAME_RE.exec(text.trim());
     if (!m) return null;
     const i = parseInt(m[1], 10), n = parseInt(m[2], 10);
-    if (i < 1 || i > n || n > MAX_FRAMES) return null;   // a foreign QR must not make us allocate millions of slots
+    if (i < 1 || i > MAX_INDEX || n > MAX_FRAMES) return null;
     let raw;
     try { raw = base43Decode(m[4]); } catch (e) { return null; }
-    if (raw.length < 2 || raw[0] !== 0x01) return null;
-    const chunk = raw.slice(1);
-    if (chunk.length > CHUNK || (i < n && chunk.length !== CHUNK)) return null;
-    return { i, n, crc: m[3], chunk };
+    const data = new Uint8Array(CHUNK);
+    if (i <= n) {
+      if (raw.length < 2 || raw[0] !== 0x01) return null;
+      const chunk = raw.slice(1);
+      if (chunk.length > CHUNK || (i < n && chunk.length !== CHUNK)) return null;
+      data.set(chunk);
+      const mask = new Uint8Array(n); mask[i - 1] = 1;
+      return { i, n, crc: m[3], mask, data, len: i === n ? (n - 1) * CHUNK + chunk.length : null };
+    }
+    if (raw.length !== 3 + CHUNK || raw[0] !== 0x02) return null;
+    const len = raw[1] * 256 + raw[2];
+    if (len <= (n - 1) * CHUNK || len > n * CHUNK) return null;
+    data.set(raw.slice(3));
+    return { i, n, crc: m[3], mask: fountainMask(i, n), data, len };
   }
 
-  // Collects frames in any order. The first good frame fixes the set (its n and
-  // CRC); frames from another set are rejected, duplicates are ignored. add()
-  // returns the progress:
+  // Collects frames in any order. The first good frame fixes the set (its n and CRC);
+  // frames from another set are rejected. Every frame is one equation over GF(2) (which
+  // chunks it XORs); they are kept in reduced row echelon form, so a frame that adds
+  // nothing new counts as a duplicate, and once n are independent each row is one chunk.
+  // add() returns the progress:
   //   { have, total, done, bytes, added, duplicate, rejected, error }
-  // bytes is the joined extension (Uint8Array) once done, else null.
-  // added: this frame was new. rejected: not a frame, or from another set.
-  // error: the joined bytes failed the CRC (should not happen; the set is reset).
+  // have: how many chunks' worth of frames are in (the rank). bytes is the joined
+  // extension (Uint8Array) once done, else null. added: this frame was new.
+  // rejected: not a frame, or from another set. error: the joined bytes failed the CRC
+  // (should not happen; the set is reset).
   class Assembler {
     constructor() { this.reset(); }
-    reset() { this.n = 0; this.crc = null; this.chunks = []; this.have = 0; this.bytes = null; }
+    reset() { this.n = 0; this.crc = null; this.len = null; this.rows = []; this.have = 0; this.bytes = null; }
     progress(extra) {
       return Object.assign({ have: this.have, total: this.n, done: !!this.bytes, bytes: this.bytes,
                              added: false, duplicate: false, rejected: false, error: null }, extra);
@@ -82,21 +110,32 @@
     add(text) {
       const f = parseFrame(text);
       if (!f) return this.progress({ rejected: true });
-      if (this.crc === null) { this.n = f.n; this.crc = f.crc; this.chunks = new Array(f.n).fill(null); }
-      else if (f.crc !== this.crc || f.n !== this.n) return this.progress({ rejected: true });
-      if (this.chunks[f.i - 1]) return this.progress({ duplicate: true });
-      this.chunks[f.i - 1] = f.chunk;
+      if (this.crc === null) { this.n = f.n; this.crc = f.crc; this.rows = new Array(f.n).fill(null); }
+      else if (f.crc !== this.crc || f.n !== this.n || (f.len !== null && this.len !== null && f.len !== this.len)) return this.progress({ rejected: true });
+      if (this.bytes) return this.progress({ duplicate: true });
+      if (f.len !== null) this.len = f.len;
+      // reduce the new equation by every pivot it touches
+      const mask = f.mask, data = f.data;
+      for (let j = 0; j < this.n; j++) if (mask[j] && this.rows[j]) xorInto(mask, data, this.rows[j]);
+      const p = mask.indexOf(1);
+      if (p < 0) return this.progress({ duplicate: true });
+      // and clear its pivot from every other row, so solved rows stay single chunks
+      const row = { mask, data };
+      for (const r of this.rows) if (r && r.mask[p]) xorInto(r.mask, r.data, row);
+      this.rows[p] = row;
       this.have++;
-      if (this.have === this.n) {
-        const len = this.chunks.reduce((a, c) => a + c.length, 0);
-        const all = new Uint8Array(len);
-        let off = 0;
-        for (const c of this.chunks) { all.set(c, off); off += c.length; }
+      if (this.have === this.n) {   // every row is now one chunk (len is known: a full rank needs the last chunk or a fountain frame)
+        const all = new Uint8Array(this.len);
+        for (let j = 0; j < this.n; j++) all.set(this.rows[j].data.subarray(0, Math.min(CHUNK, this.len - j * CHUNK)), j * CHUNK);
         if (crcHex(all) !== this.crc) { this.reset(); return this.progress({ error: 'CRC mismatch, scan again' }); }
         this.bytes = all;
       }
       return this.progress({ added: true });
     }
+  }
+  function xorInto(mask, data, row) {
+    for (let k = 0; k < mask.length; k++) mask[k] ^= row.mask[k];
+    for (let k = 0; k < data.length; k++) data[k] ^= row.data[k];
   }
 
   // Extension bytes -> [{ type, bytes }], in device row order. Unknown types are
@@ -228,5 +267,5 @@
     return stop;
   }
 
-  return { CHUNK, crc32, base43Decode, parseFrame, Assembler, records, startCamera, loadJsQR };
+  return { CHUNK, crc32, base43Decode, fountainMask, parseFrame, Assembler, records, startCamera, loadJsQR };
 });

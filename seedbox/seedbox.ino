@@ -505,20 +505,32 @@ static bool showAddressQR(int i) {
 // "More chains" view: the rows the Portfolio QR has no room for, as frames that
 // loop by themselves for the page's in-page camera scanner. Turn = step one frame
 // and pause, press = pause / play, hold = back to the Portfolio QR.
+// One loop is the n chunks, then 2n fountain frames (each the XOR of about half the
+// chunks): a phone that missed a chunk rebuilds it from whatever it reads next instead
+// of waiting a whole loop for that one frame to come round again. Each loop shows new
+// fountain frames (numbers n+1 up to 999, then round again), so the mixes keep changing.
 #define MORE_FRAME_MS 400   // per frame. Chosen with test/verify_screen.js: 350-400 ms collects all
                             // frames fastest for both quick and slow phones; the QR itself redraws in ~12 ms
+static int moreFrameAt(uint32_t pos, int n) {   // frame number shown at step pos of the sequence
+  uint32_t loop = pos / (3 * n), k = pos % (3 * n);
+  if ((int)k < n) return (int)k + 1;
+  return n + 1 + (int)((loop * 2 * n + (k - n)) % (PORTFOLIO_FRAME_MAX - n));
+}
+
 static void showMore(int n) {
-  int i = 1;
+  uint32_t pos = 0;
   bool paused = false, redraw = true;
   uint32_t shownAt = 0;
   clearScreen();
   while (gLoaded) {
     if (redraw) {
+      int i = moreFrameAt(pos, n);
       shownAt = millis();
       gHoldQR = drawMoreFrame(i);
       if (!gHoldQR) { clearScreen(); textAt(4, 60, "QR failed", C_BAD); }
       char what[28];
-      snprintf(what, sizeof what, "MORE %d/%d", i, n);
+      if (i <= n) snprintf(what, sizeof what, "MORE %d/%d", i, n);
+      else snprintf(what, sizeof what, "MORE mix %d", i - n);
       char right[24];   // a margin holds ~21 sideways characters; the measured draw time shows while paused
       if (paused) snprintf(right, sizeof right, "hold:back  draw %ums", (unsigned)((gQrDrawUs + 500) / 1000));
       else snprintf(right, sizeof right, "turn:step hold:back");
@@ -528,12 +540,12 @@ static void showMore(int n) {
     uint32_t spent = millis() - shownAt;
     Ev e = paused ? waitEvent() : waitEventFor(spent < MORE_FRAME_MS ? MORE_FRAME_MS - spent : 0);
     if (isBack(e)) break;
-    if (e == EV_CW)  { i = i % n + 1; paused = true; redraw = true; }
-    if (e == EV_CCW) { i = (i + n - 2) % n + 1; paused = true; redraw = true; }
+    if (e == EV_CW)  { pos++; paused = true; redraw = true; }
+    if (e == EV_CCW) { if (pos) pos--; paused = true; redraw = true; }
     if (e == EV_PRESS) { paused = !paused; redraw = true; }
     // time's up: next frame, unless the knob is down (a hold is starting; its bar
     // is drawn over the bottom of the code and a repaint would erase it)
-    if (e == EV_NONE && digitalRead(ENC_SW) != LOW) { i = i % n + 1; redraw = true; }
+    if (e == EV_NONE && digitalRead(ENC_SW) != LOW) { pos++; redraw = true; }
   }
   gHoldQR = false;
 }

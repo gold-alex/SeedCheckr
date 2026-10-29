@@ -456,9 +456,9 @@
     const list = accts.filter((a) => used.has(a));
     const holdings = [], partly = [];
     let others = 0;
-    // a used account is checked like the first, two at a time (each is 97 networks)
-    for (let i = 0; i < list.length; i += 2) {
-      const rs = await Promise.allSettled(list.slice(i, i + 2).map((a) => checkEvmAccount(a.addr, true)));
+    // a used account is checked like the first, four at a time (each is 97 networks)
+    for (let i = 0; i < list.length; i += 4) {
+      const rs = await Promise.allSettled(list.slice(i, i + 4).map((a) => checkEvmAccount(a.addr, true)));
       rs.forEach((r, k) => {
         const a = list[i + k];
         if (r.status !== 'fulfilled') { partly.push('account ' + a.n + ' did not answer'); return; }
