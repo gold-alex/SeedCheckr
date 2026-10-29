@@ -16,7 +16,7 @@ Unknown types are skipped by `len`, so old pages keep working with new devices.
 
 ## Frames
 
-The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames (12 today).
+The extension bytes `E` are split into chunks of at most 240 bytes, `n` frames (14 today).
 The device shows each for 400 ms (`MORE_FRAME_MS`), chosen with `seedbox/test/verify_screen.js`.
 Frame `i` (1-based) is one QR, alphanumeric mode only, ECC L, version 1-11:
 
@@ -105,7 +105,7 @@ SLIP-10 ed25519 unless noted; all path elements hardened.
 ### Whole wallets: account extended public keys
 
 These ride as a second record on an existing row (ChainAddr.ext2 / xraw), so the
-device's address list does not change. 69 bytes each (0x7B-0x7F excepted, see their rows): parent fingerprint (4, big
+device's address list does not change. 69 bytes each (0x7B-0x80 excepted, see their rows): parent fingerprint (4, big
 endian) || chain code (32) || compressed public key (33) of the account node. The
 page rebuilds the xpub and asks Haskoin for the balance of every used address
 (gap-limit scan), and that result replaces the matching first-address check.
@@ -119,7 +119,7 @@ page rebuilds the xpub and asks Haskoin for the balance of every used address
 | 0x74 | Bitcoin taproot (page scans it itself) | m/86'/0'/0' | 0x11 |
 | 0x75 | Litecoin native segwit (page scans it itself) | m/84'/2'/0' | core row 4 (LTC) |
 | 0x76 | Litecoin legacy (page scans it itself) | m/44'/2'/0' | 0x12 |
-| 0x77 | Ethereum address chain: MetaMask accounts 2-5 | m/44'/60'/0'/0 (fingerprint 0) | core row 0 (ETH) |
+| 0x77 | Ethereum address chain: MetaMask accounts 2-30 | m/44'/60'/0'/0 (fingerprint 0) | core row 0 (ETH) |
 | 0x78 | Dogecoin (page scans it itself) | m/44'/3'/0' | core row 5 (DOGE) |
 | 0x79 | Dash (page scans it itself) | m/44'/5'/0' | 0x17 |
 | 0x7A | Ravencoin (its Blockbook explorer scans the xpub) | m/44'/175'/0' | 0x1A |
@@ -128,14 +128,15 @@ page rebuilds the xpub and asks Haskoin for the balance of every used address
 | 0x7E | Ledger Live Solana accounts 2-5: 128 bytes, four ed25519 public keys | m/44'/501'/1' .. m/44'/501'/4' | extension row 0x50 (SOL Ledger/Trust) |
 | 0x7F | Bitcoin taproot accounts 2 and 3: 138 bytes, two 69-byte account keys back to back | m/86'/0'/1', m/86'/0'/2' | extension row 0x13 (LTC nested; its second slot was free) |
 | 0x7B | Ledger Live Ethereum accounts 2-5: 80 bytes, four 20-byte addresses, not a key (the account level is hardened) | m/44'/60'/1'/0/0 .. m/44'/60'/4'/0/0 | core row 16 (INJ, the same ETH key) |
+| 0x80 | Ledger Live Ethereum accounts 6-30: 1 byte, the first account's number, then up to 12 20-byte addresses (three records: accounts 6-17, 18-29, 30) | m/44'/60'/5'/0/0 .. m/44'/60'/29'/0/0 | extension rows 0x20, 0x21, 0x22 (ETC, Celo, Harmony; second slots free) |
 
 For 0x74-0x76, 0x78 and 0x79 no xpub service answers a browser, so the page derives the addresses
 itself (BIP32 public derivation, plus the BIP86 tweak for taproot) and walks them
 until 10 unused receive and 5 unused change addresses in a row, asking mempool.space /
 blockstream.info / litecoinspace.org / BitPay's Bitcore (DOGE) / insight.dash.org about each,
 with BlockCypher as the fallback for DOGE and Dash (about 3 requests a second and 100 an hour
-per visitor, so those scans go 2 addresses at a time). For 0x77 it derives indexes 1-4
-(MetaMask's accounts 2-5). Each of those, and each 0x7B address, is checked on every EVM network once it shows any sign of use (a balance on MetaMask's networks or a transaction on the ten largest).
+per visitor, so those scans go 2 addresses at a time). For 0x77 it derives indexes 1-29
+(MetaMask's accounts 2-30). Each of those, and each 0x7B and 0x80 address, is checked on every EVM network once it shows any sign of use (a balance on MetaMask's networks or a transaction on the ten largest).
 
 An extended public key reveals every address of that account (privacy, not funds):
 it goes to Haskoin only, never to price APIs.

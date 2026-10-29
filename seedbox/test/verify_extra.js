@@ -68,9 +68,9 @@ for (const m of mns) {
   ok(res && res.done, 'frames assemble');
   const recs = S.records(res.bytes);
   const ext = dev.slice(20);                                                          // device rows after the 20 core rows
-  const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x7F);                  // account xpub records
+  const acct = recs.filter((r) => r.type >= 0x70 && r.type <= 0x80);                  // account records (xpubs, further accounts)
   ok(recs.length - acct.length === ext.length, 'one record per device extension row (' + (recs.length - acct.length) + ' vs ' + ext.length + ')');
-  ok(acct.length === 16, "sixteen account records");
+  ok(acct.length === 19, "nineteen account records");
   const built = X.build(recs, K);
   const pageAddrs = new Set(built.map((c) => c.addr.replace(/^[PX]-/, '')));
   for (const [name, a] of ext) {
@@ -119,6 +119,20 @@ for (const m of mns) {
     const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();c=b.Bip44.FromSeed(s,b.Bip44Coins.ETHEREUM).Purpose().Coin();print('\\n'.join(c.Account(i).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress() for i in range(1,5)))", m], { encoding: 'utf8' }).trim().split('\n');
     for (let i = 0; i < 4; i++) ok(ledger[i] === ref[i], 'Ledger Live account ' + (i + 2) + ' == bip_utils');
   } catch (e) { console.log('(bip_utils not available: skipped the Ledger Live check)'); }
+  // Ledger Live accounts 6-30 (records 0x80) and MetaMask accounts 6-30 (derived from 0x77): one cell each
+  const ledgerRecs = recs.filter((r) => r.type === 0x80);
+  ok(ledgerRecs.length === 3 && ledgerRecs.map((r) => r.bytes.length).join() === '241,241,21', 'Ledger Live accounts 6-30 come as 3 records (12, 12, 1 addresses)');
+  const ledgerMoreCell = built.find((c) => c.name === 'Ethereum accounts 6 to 30 (Ledger Live)');
+  const mmMoreCell = built.find((c) => c.name === 'Ethereum accounts 6 to 30 (MetaMask)');
+  ok(ledgerMoreCell && mmMoreCell && ledgerMoreCell.account && mmMoreCell.account, 'page builds one cell each for MetaMask and Ledger Live accounts 6-30');
+  const hex = (u) => '0x' + Buffer.from(u).toString('hex');
+  const ledgerMore = ledgerRecs.flatMap((r) => Array.from({ length: (r.bytes.length - 1) / 20 }, (_, k) => ({ n: r.bytes[0] + k, a: hex(r.bytes.slice(1 + 20 * k, 21 + 20 * k)) })));
+  try {
+    const ref = execFileSync(py, ['-c', "import sys,bip_utils as b;s=b.Bip39SeedGenerator(sys.argv[1]).Generate();c=b.Bip44.FromSeed(s,b.Bip44Coins.ETHEREUM).Purpose().Coin();print('\\n'.join(c.Account(i).Change(b.Bip44Changes.CHAIN_EXT).AddressIndex(0).PublicKey().ToAddress() for i in range(5,30)));e=c.Account(0).Change(b.Bip44Changes.CHAIN_EXT);print('\\n'.join(e.AddressIndex(i).PublicKey().ToAddress() for i in range(5,30)))", m], { encoding: 'utf8' }).trim().split('\n');
+    ok(ledgerMore.length === 25 && ledgerMore.every((x, i) => x.n === i + 6 && x.a === ref[i].toLowerCase()) && ledgerMoreCell.addr === ref[0], 'Ledger Live accounts 6-30 == bip_utils');
+    const mm = Array.from({ length: 25 }, (_, i) => X.walletAddr('eth', X.ckdPub(ethChain.slice(36, 69), ethChain.slice(4, 36), i + 5).pub));
+    ok(mm.every((a, i) => a === ref[25 + i]) && mmMoreCell.addr === ref[25], 'MetaMask accounts 6-30 == bip_utils');
+  } catch (e) { console.log('(bip_utils not available: skipped the accounts 6-30 check)'); }
   // Phantom accounts 2-5 (m/44'/501'/i'/0') and Bitcoin segwit accounts 2-3 (m/84'/0'/1', 2')
   const phantom = built.filter((c) => / \(Phantom, Solflare\)$/.test(c.name)).map((c) => c.addr);
   const btcAcct = built.filter((c) => /^Bitcoin account [23] /.test(c.name)).map((c) => c.addr);

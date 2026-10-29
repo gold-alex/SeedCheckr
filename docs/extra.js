@@ -342,7 +342,7 @@
     const { fetchJSON, rpc, firstOk, units, h } = K;
     const one = (r) => ({ holdings: [r], others: 0, partial: null });
     const post = (body) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const out = [];
+    const out = [], ledgerMore = [];
     const add = (name, a, explorer, run, extra) => out.push(Object.assign({ name, addr: a, explorer, run }, extra || {}));
     // A whole wallet from its xpub: Haskoin walks every used address, receive and change.
     const haskoin = async (xpub, chain, derive, symbol, price) => {
@@ -670,13 +670,17 @@
           }, { replaces: ['Ravencoin'] });
           break;
         }
-        // ---- MetaMask accounts 2-5 (m/44'/60'/0'/0/1..4), every EVM network once used ----
+        // ---- MetaMask accounts 2-30 (m/44'/60'/0'/0/1..29), every EVM network once used ----
         case 0x77: {
           if (b.length !== 69) break;
           for (let n = 1; n <= 4; n++) {
             const a = walletAddr('eth', ckdPub(b.slice(36, 69), b.slice(4, 36), n).pub);
             add('Ethereum account ' + (n + 1) + ' (MetaMask)', a, 'https://debank.com/profile/', () => K.checkEvmAccount(a), { account: true });
           }
+          // accounts 6 to 30: one cell, the used ones found in a few batched requests
+          const more = [];
+          for (let n = 5; n < 30; n++) more.push({ n: n + 1, addr: walletAddr('eth', ckdPub(b.slice(36, 69), b.slice(4, 36), n).pub) });
+          add('Ethereum accounts 6 to 30 (MetaMask)', more[0].addr, 'https://debank.com/profile/', () => K.checkEvmAccounts(more), { account: true });
           break;
         }
         // ---- Ledger Live accounts 2-5 (m/44'/60'/1..4'/0/0): hardened, so the device sends addresses ----
@@ -688,8 +692,19 @@
           }
           break;
         }
+        // ---- Ledger Live accounts 6-30: records of [first account number][up to 12 addresses],
+        //      gathered into one cell (built below, once every record is read) ----
+        case 0x80: {
+          if (b.length < 21 || (b.length - 1) % 20) break;
+          for (let k = 0; k * 20 + 1 < b.length; k++) ledgerMore.push({ n: b[0] + k, addr: eip55(b.slice(1 + 20 * k, 21 + 20 * k)) });
+          break;
+        }
         default: break;   // a newer device's record type; skipped by design
       }
+    }
+    if (ledgerMore.length) {
+      ledgerMore.sort((x, y) => x.n - y.n);
+      add('Ethereum accounts ' + ledgerMore[0].n + ' to ' + ledgerMore[ledgerMore.length - 1].n + ' (Ledger Live)', ledgerMore[0].addr, 'https://debank.com/profile/', () => K.checkEvmAccounts(ledgerMore), { account: true });
     }
     return out;
   }

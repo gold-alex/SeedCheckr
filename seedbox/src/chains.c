@@ -313,7 +313,31 @@ int derive_all(const char* mnemonic, const char* passphrase, ChainAddr* out,
     if (progress) progress(at, total);
     if (ext_utxo_derive(mnemonic, seed, out + at) < 0) goto done;   at += ext_utxo_count();   if (progress) progress(at, total);
     if (ext_cosmos_derive(mnemonic, seed, out + at) < 0) goto done; at += ext_cosmos_count(); if (progress) progress(at, total);
-    if (ext_ed_derive(mnemonic, seed, out + at) < 0) goto done;     at += ext_ed_count();     if (progress) progress(at, total); }
+    if (ext_ed_derive(mnemonic, seed, out + at) < 0) goto done;     at += ext_ed_count();     if (progress) progress(at, total);
+
+    // ---- Ledger Live accounts 6-30: m/44'/60'/5..29'/0/0, as records 0x80 of [first account
+    //      number][up to 12 addresses] (accounts 6-17, 18-29, 30), riding on the ETC, Celo and
+    //      Harmony rows (ETH-style rows whose second slot is free; the page reads records by
+    //      type). 75 more EC multiplications. ----
+    uint32_t p[] = { 44|H, 60|H };
+    if (cu_derive(&parent, seed, SECP256K1_NAME, p, 2)) goto done;
+    static const uint8_t carriers[3] = { 0x20, 0x21, 0x22 };
+    uint8_t pub65[65], h[32];
+    for (int g = 0, acct = 6; g < 3; g++) {
+      ChainAddr* r = NULL;
+      for (int i = N_CHAINS; i < total; i++) if (out[i].ext == carriers[g] && !out[i].ext2) r = &out[i];
+      if (!r) goto done;
+      r->xraw[0] = (uint8_t)acct; r->xlen = 1; r->ext2 = 0x80;
+      for (int k = 0; k < 12 && acct <= 30; k++, acct++) {
+        n = parent;
+        if (!hdnode_private_ckd(&n, (uint32_t)(acct - 1)|H) || !hdnode_private_ckd(&n, 0) || !hdnode_private_ckd(&n, 0)) goto done;
+        hdnode_fill_public_key(&n);
+        if (!ecdsa_uncompress_pubkey(&secp256k1, n.public_key, pub65)) goto done;
+        keccak_256(pub65 + 1, 64, h);
+        memcpy(r->xraw + r->xlen, h + 12, 20); r->xlen += 20;
+      }
+    }
+  }
 
   rc = 0;
 done:

@@ -407,8 +407,8 @@
     const sent = BIG_EVM.map((k) => EVM.find((c) => c.key === k)).map((c) => firstOk(c.rpcs, (u) => rpc(u, 'eth_getTransactionCount', [addr, 'latest'])).then((n) => BigInt(n) > 0n, () => false));
     return (await Promise.all([mm].concat(sent))).some(Boolean);
   }
-  async function checkEvmAccount(addr) {
-    if (!(await evmUsed(addr))) return { holdings: [h('ETH', 0, 'ethereum')], others: 0, partial: null, note: 'never used: no transaction on the ' + BIG_EVM.length + ' biggest networks, nothing on MetaMask\'s' };
+  async function checkEvmAccount(addr, knownUsed) {
+    if (!knownUsed && !(await evmUsed(addr))) return { holdings: [h('ETH', 0, 'ethereum')], others: 0, partial: null, note: 'never used: no transaction on the ' + BIG_EVM.length + ' biggest networks, nothing on MetaMask\'s' };
     const rs = await Promise.allSettled(EVM.map((c) => checkEvm(c, addr, { extra: true })));
     const holdings = [], partly = [];
     let failed = 0, others = 0;
@@ -421,6 +421,55 @@
     if (failed === EVM.length) throw new Error('no network answered');
     const gaps = [failed && failed + ' of ' + EVM.length + ' networks did not answer', partly.length && partly.length + ' only partly checked (' + partly.slice(0, 3).join('; ') + (partly.length > 3 ? '; ...' : '') + ')'].filter(Boolean);
     return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others, partial: gaps.length ? gaps.join(', ') : null, note: 'all ' + EVM.length + ' EVM networks checked' };
+  }
+  // Many accounts at once (MetaMask's 6 to 30): which were ever used is found in about 13
+  // requests, not 11 an account. Each of the ten biggest networks gets one JSON-RPC batch of
+  // nonce and balance for every address; MetaMask's balances call takes 10 addresses at a time
+  // (more make the URL too long). Only the used ones are then checked on every network.
+  async function rpcBatch(url, calls) {
+    const j = await fetchJSON(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(calls.map(([method, params], id) => ({ jsonrpc: '2.0', id, method, params }))) });
+    const byId = new Map((Array.isArray(j) ? j : []).map((x) => [x.id, x.result]));
+    // a server that refuses batches, or answers only some (mainnet.base.org), is no answer
+    if (calls.some((c, i) => typeof byId.get(i) !== 'string')) throw new Error('batch not answered');
+    return calls.map((c, i) => byId.get(i));
+  }
+  async function checkEvmAccounts(accts) {
+    const used = new Set(), gaps = [], mmGaps = [];
+    let answered = 0;
+    const ids = Object.values(window.SeedTokens.MM), parts = [];
+    for (let i = 0; i < accts.length; i += 10) parts.push(accts.slice(i, i + 10));
+    await Promise.all(BIG_EVM.map((k) => EVM.find((c) => c.key === k)).map((c) =>
+      firstOk(c.rpcs, (u) => rpcBatch(u, accts.flatMap((a) => [['eth_getTransactionCount', [a.addr, 'latest']], ['eth_getBalance', [a.addr, 'latest']]])))
+        .then((r) => { answered++; accts.forEach((a, i) => { if (BigInt(r[2 * i]) > 0n || BigInt(r[2 * i + 1]) > 0n) used.add(a); }); }, () => gaps.push(c.name)))
+      .concat(parts.map(async (part) => {
+        const which = 'accounts ' + part[0].n + '-' + part[part.length - 1].n;
+        try {
+          const j = await fetchJSON('https://accounts.api.cx.metamask.io/v4/multiaccount/balances?networks=' + ids.join(',') + '&accountAddresses=' + part.flatMap((a) => ids.map((n) => 'eip155:' + n + ':' + a.addr)).join(','), undefined, 20000);
+          if (!Array.isArray(j.balances)) throw new Error('unexpected answer');
+          answered++;
+          for (const b of j.balances) if (Number(b.balance) > 0) { const a = part.find((x) => String(b.accountAddress || '').toLowerCase().endsWith(x.addr.toLowerCase())); if (a) used.add(a); }
+          const left = (j.unprocessedNetworks || []).length;
+          if (left) mmGaps.push('MetaMask\'s balances left out ' + left + ' network' + (left > 1 ? 's' : '') + ' for ' + which);
+        } catch (e) { mmGaps.push('MetaMask\'s balances did not answer for ' + which); }
+      })));
+    if (!answered) throw new Error('no network answered');
+    const list = accts.filter((a) => used.has(a));
+    const holdings = [], partly = [];
+    let others = 0;
+    // a used account is checked like the first, two at a time (each is 97 networks)
+    for (let i = 0; i < list.length; i += 2) {
+      const rs = await Promise.allSettled(list.slice(i, i + 2).map((a) => checkEvmAccount(a.addr, true)));
+      rs.forEach((r, k) => {
+        const a = list[i + k];
+        if (r.status !== 'fulfilled') { partly.push('account ' + a.n + ' did not answer'); return; }
+        for (const x of r.value.holdings) if (x.amount > 0) holdings.push(Object.assign({}, x, { symbol: x.symbol + ', account ' + a.n }));
+        others += r.value.others || 0;
+        if (r.value.partial) partly.push('account ' + a.n + ': ' + r.value.partial);
+      });
+    }
+    const not = gaps.length ? 'use not tested on ' + gaps.join(', ') : null;
+    return { holdings: holdings.length ? holdings : [h('ETH', 0, 'ethereum')], others, partial: [not, ...mmGaps, ...partly].filter(Boolean).join('; ') || null,
+      note: list.length ? 'used: account' + (list.length > 1 ? 's ' : ' ') + list.map((a) => a.n).join(', ') + '; each checked on all ' + EVM.length + ' EVM networks' : 'none of the ' + accts.length + ' ever used on the ' + BIG_EVM.length + ' biggest networks or MetaMask\'s' };
   }
   // Smart accounts this wallet owns on Ethereum hold their positions at their own address: an
   // Instadapp account (DSA; Instadapp's list links owners to accounts, the account's isAuth()
@@ -1203,7 +1252,7 @@
   // frames the device shows after it (docs/EXTENSIONS.md). The page reads them with the
   // camera, decodes the records, and checks those networks too.
   const extraHelpers = {
-    fetchJSON, rpc, firstOk, units, h, checkEvm, checkEvmAccount, checkMempoolStyle, checkBtc, checkLtc, checkBch, checkBsv, checkXecHash, checkCosmos, checkSol,
+    fetchJSON, rpc, firstOk, units, h, checkEvm, checkEvmAccount, checkEvmAccounts, checkMempoolStyle, checkBtc, checkLtc, checkBch, checkBsv, checkXecHash, checkCosmos, checkSol,
     fetchText: (url) => fetchOnce(url, undefined, 15000, 'text'),
     otherTokens: (slug, list, known) => TOKENS.other(slug, list, known),
     evm: (key) => EVM.find((c) => c.key === key),

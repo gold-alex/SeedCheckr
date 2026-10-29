@@ -16,7 +16,7 @@ const appSrc = fs.readFileSync(path.join(REPO, 'docs/app.js'), 'utf8');
 // ---- payload ----
 let arg = process.argv[2] || 'demo';
 const MORE = process.argv.includes('--more');
-const SKIP_ACCOUNTS = process.argv.includes('--skip-accounts');   // untick "Also check accounts 2 to 5"
+const SKIP_ACCOUNTS = process.argv.includes('--skip-accounts');   // untick "Also check further accounts"
 let FRAMES = [];
 let payload;
 if (arg === 'demo') {
