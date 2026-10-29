@@ -70,12 +70,18 @@
     return t.length ? t : null;
   }
 
+  // v1: every chain (the layout above). v2: an Electrum wallet, Bitcoin only, 71 bytes:
+  // 0x02, kind (0 standard: root key, P2PKH; 1 segwit: key at m/0', P2WPKH), then the key as
+  // parent fingerprint (4) || chain code (32) || compressed public key (33).
   function parsePayload(text) {
     const bytes = base43Decode(text);
-    if (bytes.length !== PAYLOAD_LEN || bytes[0] !== 1) {
-      throw new Error('not a SeedBox v1 payload (' + bytes.length + ' bytes, version ' + bytes[0] + ')');
+    if (bytes.length === 71 && bytes[0] === 2 && bytes[1] < 2) {
+      return { version: 2, electrum: bytes[1] ? 'segwit' : 'standard', key: bytes.slice(2) };
     }
-    const out = {};
+    if (bytes.length !== PAYLOAD_LEN || bytes[0] !== 1) {
+      throw new Error('not a SeedBox payload (' + bytes.length + ' bytes, version ' + bytes[0] + ')');
+    }
+    const out = { version: 1 };
     let off = 1;
     for (const [k, n] of LAYOUT) { out[k] = bytes.slice(off, off + n); off += n; }
     return out;

@@ -151,6 +151,18 @@ page rebuilds the xpub and asks Haskoin for the balance of every used address
 | 0x7B | Ledger Live Ethereum accounts 2-5: 80 bytes, four 20-byte addresses, not a key (the account level is hardened) | m/44'/60'/1'/0/0 .. m/44'/60'/4'/0/0 | core row 16 (INJ, the same ETH key) |
 | 0x80 | Ledger Live Ethereum accounts 6-30: 1 byte, the first account's number, then up to 12 20-byte addresses (three records: accounts 6-17, 18-29, 30) | m/44'/60'/5'/0/0 .. m/44'/60'/29'/0/0 | extension rows 0x20, 0x21, 0x22 (ETC, Celo, Harmony; second slots free) |
 
+Two more types never travel in frames: the page makes them itself from the Portfolio QR of an
+Electrum seed (payload v2, below), so the same code checks them.
+
+| Type | What | Path | From |
+|---|---|---|---|
+| 0x81 | Electrum standard wallet: the root key (fingerprint 0), P2PKH at m/0/i and m/1/i; also checked on Bitcoin Cash | m | payload v2, kind 0 |
+| 0x82 | Electrum segwit wallet: the key at m/0', P2WPKH at m/0'/0/i and m/0'/1/i | m/0' | payload v2, kind 1 |
+
+Payload v2 (the Portfolio QR of an Electrum seed, in place of the 257-byte v1): 71 bytes, base43 like v1:
+`0x02`, kind (0 standard, 1 segwit), then the key in the 69-byte layout above. Haskoin scans it; if
+Haskoin does not answer, the page walks it to Electrum's gap limits (20 unused receive, 10 unused change).
+
 For 0x74-0x76, 0x78 and 0x79 no xpub service answers a browser, so the page derives the addresses
 itself (BIP32 public derivation, plus the BIP86 tweak for taproot) and walks them
 until 10 unused receive and 5 unused change addresses in a row, asking mempool.space /

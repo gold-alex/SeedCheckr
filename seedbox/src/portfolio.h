@@ -35,6 +35,13 @@ int portfolio_pack(const ChainAddr* rows, uint8_t out[PORTFOLIO_BYTES]);
 // Returns the string length, or -1 on error / if cap is too small.
 int portfolio_text(const ChainAddr* rows, char* out, int cap);
 
+// Payload v2, an Electrum wallet (Bitcoin only, so nothing else to carry): 71 bytes,
+//   0x02 || kind (0 = standard P2PKH, root key; 1 = segwit P2WPKH, key at m/0') ||
+//   parent fingerprint (4) || chain code (32) || compressed public key (33)
+// from row 0 of derive_electrum(), as base43 text for the same URL. Returns the length or -1.
+#define PORTFOLIO_ELECTRUM_BYTES 71
+int portfolio_electrum_text(const ChainAddr* rows, int segwit, char* out, int cap);
+
 // Encodes url_prefix (byte mode) followed by payload (alphanumeric mode) into
 // one QR code, choosing the smallest version <= max_version that fits.
 // temp and qrcode must each be qrcodegen_BUFFER_LEN_FOR_VERSION(max_version) bytes.

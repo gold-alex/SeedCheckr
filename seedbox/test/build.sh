@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 rm -f obj_*.o
-( cd ../src && for f in trezor/*.c trezor/aes/*.c trezor/ed25519-donna/*.c chains.c chains_ext_*.c slip39.c portfolio.c qr/qrcodegen.c; do
+( cd ../src && for f in trezor/*.c trezor/aes/*.c trezor/ed25519-donna/*.c chains.c chains_ext_*.c slip39.c electrum.c portfolio.c qr/qrcodegen.c; do
     gcc -std=gnu11 -O2 -w -DNDEBUG -I trezor -c "$f" -o "../test/obj_$(basename "$f" .c).o"
   done )
 gcc -O2 -w -o test_chains test_chains.c obj_*.o

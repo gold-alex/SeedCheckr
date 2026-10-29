@@ -1,6 +1,6 @@
 Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pip install mnemonic bip_utils`; the QR read-back needs node and `npm install` in this folder.
 
-    ./build.sh      # trezor-crypto, chains.c, portfolio.c, qrcodegen.c -> test_chains, test_portfolio, test_qr
+    ./build.sh      # trezor-crypto, chains.c, slip39.c, electrum.c, portfolio.c, qrcodegen.c -> test_chains, test_portfolio, test_qr
 
     # core: SHA-256, BIP39 checksum, prefix search
     python3 -c "import os;from mnemonic import Mnemonic as M;m=M('english');[print(e.hex(),m.to_mnemonic(e)) for n in (16,20,24,28,32) for e in [os.urandom(n) for _ in range(100)]]" > vectors.txt
@@ -14,8 +14,12 @@ Host-side tests (PC, not Arduino). Needs gcc/g++. The chain comparison needs `pi
     # python-shamir-mnemonic) and N random backups made by that library; pip install shamir-mnemonic
     PYTHON=/path/to/venv/bin/python node verify_slip39.js 40
 
+    # Electrum seeds (src/electrum.c via test_chains "electrum:<words>"): Electrum's own test wallets and
+    # seed vector, then N random Electrum seeds and N random BIP39 phrases against Python; needs bip_utils
+    PYTHON=/path/to/venv/bin/python node verify_electrum.js 40
+
     # the device's UI on the PC (sim/: framebuffer screen, scripted knob): whole recoveries, BIP39 with
-    # a passphrase and SLIP-39 backups of several shares and groups, addresses vs test_chains.
+    # a passphrase, SLIP-39 backups of several shares and groups, and Electrum seeds, addresses vs test_chains.
     # SHOTS=/some/dir keeps a PNG of every step. Needs zlib.
     PYTHON=/path/to/venv/bin/python node verify_ui.js
 

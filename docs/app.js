@@ -1070,27 +1070,35 @@
 
   // ---------------- the show ----------------
   async function run(payloadText) {
-    let addr;
+    let checks, caseId;
     try {
       state.v1 = D.parsePayload(payloadText);
-      addr = await D.addressesFrom(state.v1);
+      if (state.v1.version === 2) {
+        // an Electrum wallet: Bitcoin only, one key, checked by extra.js as record 0x81 / 0x82
+        if (!window.SeedExtra) throw new Error('extra.js did not load; it checks Electrum wallets. Reload the page.');
+        const sw = state.v1.electrum === 'segwit';
+        checks = window.SeedExtra.build([{ type: sw ? 0x82 : 0x81, bytes: state.v1.key }], extraHelpers);
+        caseId = shortAddr(window.SeedExtra.childAddrs(state.v1.key, sw ? 'btc-wpkh' : 'btc-pkh', 0, 0, 1)[0]);
+      } else {
+        const addr = await D.addressesFrom(state.v1);
+        checks = buildChecks(addr);
+        caseId = shortAddr(addr.evm);
+      }
     } catch (e) {
       $('#error-text').textContent = e.message;
       $('#error').hidden = false;
       return;
     }
-    const caseId = shortAddr(addr.evm);
     $('#case-id').textContent = caseId;
     $('#case-wallet').textContent = caseId;
     $('#stage').hidden = false;
 
-    const checks = buildChecks(addr);
-    $('#stage-title').textContent = 'Checking ' + checks.length + ' networks';
+    $('#stage-title').textContent = 'Checking ' + plural(checks.length, 'network', 'networks');
     const progress = liveProgress(checks, { meter: $('#meter'), fill: $('#meter-fill'), pct: $('#pct'), text: $('#progress-text'), noun: 'networks' });
     fetchPricesEarly();
     state.results = await runChecks(checks, progress);
     $('#meter').classList.add('done');
-    $('#progress-text').textContent = 'All ' + checks.length + ' networks answered. Adding it up';
+    $('#progress-text').textContent = (checks.length > 1 ? 'All ' + checks.length + ' networks answered' : 'It answered') + '. Adding it up';
     const v = await showVerdict(state.results);
 
     // the reveal: the counter gives way to the verdict, the board stays as the summary
@@ -1104,7 +1112,7 @@
     window.scrollTo && window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
     if (v.chainsWithCoins > 0 && !reduced) confetti();
     await wait(500);
-    $('#more').hidden = !window.SeedScan || !window.SeedExtra;
+    $('#more').hidden = !window.SeedScan || !window.SeedExtra || state.v1.version === 2;   // an Electrum wallet has no moving QR
     $('#casefile').hidden = false;
   }
 
@@ -1396,7 +1404,9 @@
     }
     $('#nothing-wrap').hidden = nothingCount === 0;
     $('#nothing-summary').textContent = plural(nothingCount, 'network', 'networks') + ' with nothing on them';
-    $('#casefile-note').textContent = 'Bitcoin and Litecoin show the first receive address only; a wallet that has been used may hold coins on later addresses, which the BTC zpub entry on the device covers. Bitcoin Cash, Bitcoin SV and eCash are read at the legacy Bitcoin address, and Ethereum Classic, EthereumPoW and PulseChain at the Ethereum address, so they show coins that were there when each chain split off.' + (failed ? ' Tap a row for the reason it did not answer.' : '');
+    $('#casefile-note').textContent = state.v1 && state.v1.version === 2
+      ? 'An Electrum wallet holds Bitcoin only. Every receive and change address it would have used was checked (Electrum stops after 20 unused receive and 10 unused change addresses). A standard Electrum wallet is also checked on Bitcoin Cash, which copied every Bitcoin balance in August 2017.' + (failed ? ' Tap a row for the reason it did not answer.' : '')
+      : 'Bitcoin and Litecoin show the first receive address only; a wallet that has been used may hold coins on later addresses, which the BTC zpub entry on the device covers. Bitcoin Cash, Bitcoin SV and eCash are read at the legacy Bitcoin address, and Ethereum Classic, EthereumPoW and PulseChain at the Ethereum address, so they show coins that were there when each chain split off.' + (failed ? ' Tap a row for the reason it did not answer.' : '');
   }
 
   // ---------------- entry ----------------

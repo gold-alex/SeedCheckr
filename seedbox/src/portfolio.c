@@ -76,6 +76,14 @@ int portfolio_text(const ChainAddr* rows, char* out, int cap) {
   return base43_encode(bytes, PORTFOLIO_BYTES, out, cap);
 }
 
+int portfolio_electrum_text(const ChainAddr* rows, int segwit, char* out, int cap) {
+  uint8_t b[PORTFOLIO_ELECTRUM_BYTES];
+  if (rows[0].xlen != 69) return -1;
+  b[0] = 2; b[1] = segwit ? 1 : 0;
+  memcpy(b + 2, rows[0].xraw, 69);
+  return base43_encode(b, sizeof b, out, cap);
+}
+
 bool portfolio_qr(const char* url_prefix, const char* payload,
                   uint8_t* temp, uint8_t* qrcode, int max_version) {
   static uint8_t url_bits[64];

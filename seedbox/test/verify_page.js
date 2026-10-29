@@ -8,6 +8,8 @@
 //   phone    - the demo on a throttled mid-range phone (Slow 4G, CPU 4x slower): verdict within 60 s
 //   demo     - the famous wallet, live: every cell resolves, legend counts add up to the board,
 //              rows match cells, the verdict is "are in possession", no page errors, no sideways scroll
+//   electrum - payload v2 (Electrum's own standard and segwit test wallets), live: the wallet key as
+//              Electrum shows it, Bitcoin Cash only for standard, no moving-QR offer, an Electrum note
 // usage: node verify_page.js [offline|demo|landing|error|phone ...]   (default: all but phone)
 //        CHROME=/path/to/chrome node verify_page.js            (default: the macOS Chrome app)
 'use strict';
@@ -19,7 +21,12 @@ const pp = require('puppeteer-core');
 const DOCS = path.join(__dirname, '..', '..', 'docs');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const DEMO = fs.readFileSync(path.join(DOCS, 'app.js'), 'utf8').match(/DEMO_PAYLOAD = '([^']+)'/)[1];
-const which = process.argv.slice(2).length ? process.argv.slice(2) : ['landing', 'error', 'offline', 'demo'];
+const which = process.argv.slice(2).length ? process.argv.slice(2) : ['landing', 'error', 'offline', 'demo', 'electrum'];
+// test_chains "electrum:<words>" payloads of Electrum's test_wallet_vertical.py seeds
+const ELECTRUM = {
+  standard: ['4BS.8XCCPB9+ZWFW-ZDMMK5-H:OUTITIP96S:E+ADGDU9BL765GK8K3F/-$/VXAO7PP266/U0WDEUYIA-MGAXKP*8QQE74HXF67EBZ-.', 'xpub661MyMwAqRbcFWohJWt7PHsFEJfZAvw9ZxwQoDa4SoMgsDDM1T7WK3u9E4edkC4ugRnZ8E4xDZRpk8Rnts3Nbt97dPwT52CwBdDWroaZf8U', 2],
+  segwit: ['4CC60KW:*+Y1/RFC./C7+PQDKUK2:CM:U*P76*5:H64Q-5Z32+T.$92IMSJCT13LD3Q/SNCWDIR8UWSM:6VH8ZDQJ+TDUUI6KJLSQ0EA', 'zpub6nsHdRuY92FsMKdbn9BfjBCG6X8pyhCibNP6uDvpnw2cyrVhecvHRMa3Ne8kdJZxjxgwnpbHLkcR4bfnhHy6auHPJyDTQ3kianeuVLdkCYQ', 1],
+};
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 const server = http.createServer((req, res) => {
@@ -51,12 +58,17 @@ const snapshot = () => ({
   retry: document.querySelector('#retry').hidden ? null : document.querySelector('#retry').textContent,
 });
 
-async function open(browser, hash, { offline = false } = {}) {
+async function open(browser, hash, { offline = false, block = null } = {}) {
   const page = await browser.newPage();
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const net = { offline };
+  net.asked = [];
+  if (block) {                         // one host down: its requests fail, the rest go through and are counted
+    await page.setRequestInterception(true);
+    page.on('request', (r) => { const host = new URL(r.url()).hostname; net.asked.push(host); host === block ? r.abort('connectionrefused') : r.continue(); });
+  }
   if (offline) {
     await page.setRequestInterception(true);
     page.on('request', (r) => (!net.offline || new URL(r.url()).hostname === '127.0.0.1' ? r.continue() : r.abort('internetdisconnected')));
@@ -157,6 +169,40 @@ const RUNS = {
     check('verdict is "are in possession"', /are in possession/.test(s.verdict || ''), s.verdict);
     if (s.noAnswer) check('networks that did not answer are counted under the verdict', s.fine.includes(s.noAnswer + ' network'), s.fine);
     console.log('       ' + s.cells.length + ' networks: ' + JSON.stringify(s.legend));
+    await page.close();
+  },
+  async electrum(browser) {
+    for (const [kind, [payload, key, n]] of Object.entries(ELECTRUM)) {
+      const { page, errors } = await open(browser, payload);
+      await page.waitForFunction(() => !document.querySelector('#casefile').hidden || !document.querySelector('#error').hidden, { timeout: 120000 });
+      await new Promise((r) => setTimeout(r, 300));
+      const s = await page.evaluate(snapshot);
+      const x = await page.evaluate(() => ({
+        error: document.querySelector('#error').hidden ? null : document.querySelector('#error-text').textContent,
+        names: [...document.querySelectorAll('#rows li .name, #rows-nothing li .name')].map((e) => e.textContent),
+        addrs: [...document.querySelectorAll('#rows li .addr.full, #rows-nothing li .addr.full')].map((e) => e.textContent),
+        more: document.querySelector('#more').hidden, note: document.querySelector('#casefile-note').textContent,
+        title: document.querySelector('#stage-title').textContent,
+      }));
+      check(kind + ': no error page', x.error === null, x.error);
+      await boardChecks(s, errors);
+      check(kind + ': ' + n + ' check' + (n > 1 ? 's' : ''), s.cells.length === n, x.names.join(', '));
+      check(kind + ': the wallet key as Electrum shows it', x.addrs.includes(key), x.addrs.join(' '));
+      check(kind + ': Bitcoin Cash only for standard', x.names.some((t) => /Bitcoin Cash/.test(t)) === (kind === 'standard'), x.names.join(', '));
+      check(kind + ': no moving-QR offer', x.more);
+      check(kind + ': Electrum note', /Electrum wallet holds Bitcoin only/.test(x.note), x.note.slice(0, 60));
+      check(kind + ': verdict shown', !!s.verdict, s.verdict);
+      console.log('       ' + kind + ': ' + JSON.stringify(s.legend) + ' ' + s.verdict + ' | ' + x.title);
+      await page.close();
+    }
+    // Haskoin down: the page walks the segwit wallet itself, 20 receive and 10 change addresses
+    const { page, errors, net } = await open(browser, ELECTRUM.segwit[0], { block: 'api.haskoin.com' });
+    await page.waitForFunction(() => !document.querySelector('#casefile').hidden, { timeout: 180000 });
+    const s = await page.evaluate(snapshot);
+    const walked = net.asked.filter((h) => h === 'mempool.space' || h === 'blockstream.info').length;
+    check('Haskoin down: no page errors', errors.length === 0, errors.join(' | ') || undefined);
+    check('Haskoin down: the wallet still answers', s.cells.length === 1 && s.cells[0] === 'empty', s.cells.join(','));
+    check('Haskoin down: at least 30 addresses walked', walked >= 30, walked + ' address requests');
     await page.close();
   },
 };

@@ -85,7 +85,7 @@ static void simStep() {
   else if (op == "shot") { std::string n; in >> n; png(n); }
   else if (op == "dump") {
     if (!gLoaded) printf("NOT LOADED\n");
-    else for (int i = 0; i < chains_count(); i++) printf("%s|%s\n", gAddr[i].name, gAddr[i].addr);
+    else for (int i = 0; i < gRows; i++) printf("%s|%s\n", gAddr[i].name, gAddr[i].addr);
   }
   else if (op == "passlen") printf("PASSLEN %d\n", (int)strlen(gPass));
   else if (op == "end") { png("end"); exit(0); }

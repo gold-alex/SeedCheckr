@@ -7,7 +7,8 @@
  *
  * Flow:
  *   1. Type a 12, 15, 18, 21 or 24 word BIP39 seed in with the knob, or a 20 or 33
- *      word SLIP-39 (Shamir) backup, every share it needs; then an optional passphrase.
+ *      word SLIP-39 (Shamir) backup, every share it needs, or an Electrum seed (12 or
+ *      13 words, Bitcoin only); then an optional passphrase.
  *   2. The device derives public addresses for 20 chains (one EVM address
  *      covers Ethereum, Base, Arbitrum, Polygon, BSC, Optimism, Avalanche...).
  *   3. The seed is zeroed from RAM the moment derivation finishes.
@@ -30,6 +31,7 @@
 #include <glcdfont.c>          // Adafruit GFX's built-in 5x7 font, for the sideways QR labels
 #include "seedcore.h"
 #include "src/slip39.h"
+#include "src/electrum.h"
 #include "src/chains.h"
 #include "src/portfolio.h"
 
@@ -84,6 +86,10 @@ static char     gPass[PASS_MAX + 1];   // passphrase, "" for none
 static ChainAddr gAddr[CHAINS_MAX];
 static bool      gLoaded = false;
 static bool      gUsedPass = false;   // the addresses were derived with a passphrase (shown in titles)
+static int       gRows = 0;           // rows in gAddr: chains_count(), or ELECTRUM_ROWS
+// The typed words are an Electrum seed, and later the addresses are its wallet's (Bitcoin only:
+// two rows, and the Portfolio QR is payload v2).
+static ElectrumType gElectrum = ELECTRUM_NONE;
 
 static int haveCount(int nwords) { int n = 0; for (int i = 0; i < nwords; i++) n += gHave[i]; return n; }
 
@@ -104,6 +110,17 @@ static void wipeAll() {
   secure_zero(gAddr, sizeof gAddr);
   gLoaded = false;
   gUsedPass = false;
+  gRows = 0;
+  gElectrum = ELECTRUM_NONE;
+}
+
+// The typed words as one string in gMnemonic, single spaces, as BIP39 and Electrum hash it.
+static void buildMnemonic(int nwords) {
+  gMnemonic[0] = 0;
+  for (int i = 0; i < nwords; i++) {
+    if (i) strcat(gMnemonic, " ");
+    strcat(gMnemonic, WORDS[gIdx[i]]);
+  }
 }
 
 // The word list being typed from: BIP39 (2048 words) or SLIP-39 (1024).
@@ -437,7 +454,8 @@ static bool drawQR(const char* text) {
 // all 20 chains fit in one code. Returns false if it does not fit.
 static bool drawPortfolioQR() {
   static char payload[PORTFOLIO_TEXT_MAX];
-  if (portfolio_text(gAddr, payload, sizeof payload) < 0) return false;
+  if (gElectrum ? portfolio_electrum_text(gAddr, gElectrum == ELECTRUM_SEGWIT, payload, sizeof payload) < 0
+                : portfolio_text(gAddr, payload, sizeof payload) < 0) return false;
   if (!portfolio_qr(PORTFOLIO_URL, payload, qrTemp, qrCode, QR_MAX_VERSION)) return false;
   paintQR();
   return true;
@@ -447,7 +465,7 @@ static bool drawPortfolioQR() {
 // animated frames of docs/EXTENSIONS.md. Returns false if it does not fit.
 static bool drawMoreFrame(int i) {
   char text[PORTFOLIO_FRAME_TEXT_MAX];
-  if (portfolio_frame_text(gAddr, chains_count(), i, text, sizeof text) < 0) return false;
+  if (portfolio_frame_text(gAddr, gRows, i, text, sizeof text) < 0) return false;
   if (!portfolio_frame_qr(text, qrTemp, qrCode, QR_MAX_VERSION)) return false;
   paintQR();
   return true;
@@ -493,15 +511,15 @@ static int showAddressText(int i) {
     textAt(SCR_W - 2 - 6 * 10, SCR_H - 10, "hold: back", C_DIM);
     gAddrScreenLive = true;
   }
-  char pos[28]; snprintf(pos, sizeof pos, "\x11%d/%d\x10", i + 1, chains_count());   // turn arrows
+  char pos[28]; snprintf(pos, sizeof pos, "\x11%d/%d\x10", i + 1, gRows);   // turn arrows
   drawTitle(a.name);
   titleTag(pos);
   lineAt(2, 14, a.path, C_DIM, cpl);
   drawAddress(a.addr, 26, SCR_H - 12);
   for (;;) {
     Ev e = waitEvent();
-    if (e == EV_CW)  return (i + 1) % chains_count();
-    if (e == EV_CCW) return (i + chains_count() - 1) % chains_count();
+    if (e == EV_CW)  return (i + 1) % gRows;
+    if (e == EV_CCW) return (i + gRows - 1) % gRows;
     if (e == EV_PRESS) return i | 0x100;    // flag: open QR
     if (isBack(e)) return -1;
   }
@@ -582,17 +600,25 @@ static void showMore(int n) {
 // Portfolio view. Press = QR with every address, press again = back here, hold = back to list.
 // On the QR, a turn opens the "more chains" frames when there are any.
 static void showPortfolio() {
-  const int frames = portfolio_frame_count(gAddr, chains_count());
+  const int frames = portfolio_frame_count(gAddr, gRows);
   int more = 0;
-  for (int i = 0; i < chains_count(); i++) more += gAddr[i].ext != 0;
+  for (int i = 0; i < gRows; i++) more += gAddr[i].ext != 0;
   for (;;) {
     clearScreen();
     drawTitle("Portfolio");
-    textAt(2, 16, "All 20 addresses in", C_FG);
-    textAt(2, 26, "one QR, public only.", C_FG);
-    textAt(2, 42, "Scan: the web page", C_DIM);
-    textAt(2, 52, "checks every chain.", C_DIM);
-    textAt(2, 68, "BTC: 1st addr only.", C_DIM);
+    if (gElectrum) {
+      textAt(2, 16, "The Electrum wallet's", C_FG);
+      textAt(2, 26, "public key in one QR.", C_FG);
+      textAt(2, 42, "Scan: the web page", C_DIM);
+      textAt(2, 52, "checks every address.", C_DIM);
+      textAt(2, 68, "Bitcoin only.", C_DIM);
+    } else {
+      textAt(2, 16, "All 20 addresses in", C_FG);
+      textAt(2, 26, "one QR, public only.", C_FG);
+      textAt(2, 42, "Scan: the web page", C_DIM);
+      textAt(2, 52, "checks every chain.", C_DIM);
+      textAt(2, 68, "BTC: 1st addr only.", C_DIM);
+    }
     if (frames > 0) {
       char l[24];
       snprintf(l, sizeof l, "Then turn: %d more", more);
@@ -609,7 +635,7 @@ static void showPortfolio() {
         clearScreen();
         gHoldQR = drawPortfolioQR();
         if (!gHoldQR) textAt(4, 60, "QR failed", C_BAD);
-        qrLabels("ALL CHAINS", "  scan me", frames > 0 ? "turn: more chains" : "press: back");
+        qrLabels(gElectrum ? "BTC WALLET" : "ALL CHAINS", "  scan me", frames > 0 ? "turn: more chains" : "press: back");
         redraw = false;
       }
       e = waitEvent();
@@ -627,13 +653,13 @@ static void showPortfolio() {
 
 static void browseAddresses() {
   static const char* items[CHAINS_MAX + 2];
-  int n = chains_count();
-  items[0] = "Portfolio (all chains)";
+  int n = gRows;
+  items[0] = gElectrum ? "Portfolio (wallet)" : "Portfolio (all chains)";
   for (int i = 0; i < n; i++) items[i + 1] = gAddr[i].name;
   items[n + 1] = "Wipe & exit";
   int sel = 0;
   while (gLoaded) {
-    sel = runMenu(gUsedPass ? "Addresses (passphrase)" : "Addresses", items, n + 2, sel, 1);
+    sel = runMenu(gElectrum ? (gUsedPass ? "Electrum (passphrase)" : "Electrum wallet") : gUsedPass ? "Addresses (passphrase)" : "Addresses", items, n + 2, sel, 1);
     if (sel == MENU_BACK) { sel = n + 1; continue; }    // hold just jumps to "Wipe & exit"
     if (sel < 0 || sel == n + 1) break;
     if (sel == 0) { showPortfolio(); continue; }
@@ -675,21 +701,19 @@ static void deriveScreen(const char* title) {
 // BIP39: the typed words and gPass -> gAddr. Wipes every secret either way.
 static bool deriveFromEntered(int nwords) {
   uint8_t ent[32];
-  bool valid = haveCount(nwords) == nwords && bip39_decode(gIdx, nwords, ent);
+  bool valid = haveCount(nwords) == nwords && (gElectrum || bip39_decode(gIdx, nwords, ent));
   secure_zero(ent, sizeof ent);
   if (!valid) { wipeAll(); message("Phrase incomplete", "Nothing was derived.", "Start again.", C_BAD); return false; }
-  gMnemonic[0] = 0;
-  for (int i = 0; i < nwords; i++) {
-    if (i) strcat(gMnemonic, " ");
-    strcat(gMnemonic, WORDS[gIdx[i]]);
-  }
+  buildMnemonic(nwords);
   bool withPass = gPass[0] != 0;
   deriveScreen("Deriving addresses");
-  int rc = derive_all(gMnemonic, gPass, gAddr, deriveProgress);
+  int rc = gElectrum ? derive_electrum(gMnemonic, gPass, gElectrum, gAddr, deriveProgress)
+                     : derive_all(gMnemonic, gPass, gAddr, deriveProgress);
   wipeSecret();
   scrubStack();
   if (rc != 0) { wipeAll(); message("Derivation failed", nullptr, nullptr, C_BAD); return false; }
   gLoaded = true; gUsedPass = withPass;
+  gRows = gElectrum ? ELECTRUM_ROWS : chains_count();
   return true;
 }
 
@@ -717,6 +741,7 @@ static bool deriveFromShares() {
   if (r != SLIP39_OK) { wipeAll(); message("Could not unlock", "Nothing was derived.", "Start again.", C_BAD); return false; }
   if (rc != 0) { wipeAll(); message("Derivation failed", nullptr, nullptr, C_BAD); return false; }
   gLoaded = true; gUsedPass = withPass;
+  gRows = chains_count();
   return true;
 }
 
@@ -997,8 +1022,30 @@ static int wordScreen(int w, int nwords, const char* prefix, int startKey) {
   }
 }
 
-// The typed words make a valid phrase: the BIP39 checksum, or for a SLIP-39 share its
-// RS1024 checksum (which catches any 3 wrong words) and a well-formed header.
+// Two choices on rows y and y + 14, the cursor on a yellow bar. Returns 0 or 1,
+// MENU_BACK (hold) or MENU_TIMEOUT. For screens that explain something above the choice.
+static int choiceAt(int y, const char* a, const char* b, int sel) {
+  const char* items[2] = { a, b };
+  int prev = -1;
+  for (;;) {
+    if (sel != prev) {
+      for (int i = 0; i < 2; i++) {
+        tft.fillRect(0, y + 14 * i, SCR_W, 13, i == sel ? C_HI : C_BG);
+        textAt(4, y + 14 * i + 3, items[i], i == sel ? ST77XX_BLACK : C_FG);
+      }
+      prev = sel;
+    }
+    Ev e = waitEvent();
+    if (e == EV_CW || e == EV_CCW) sel ^= 1;
+    else if (e == EV_PRESS) return sel;
+    else if (e == EV_LONG) return MENU_BACK;
+    else if (e == EV_TIMEOUT) return MENU_TIMEOUT;
+  }
+}
+
+// The typed words make a valid phrase: the BIP39 checksum or Electrum's version HMAC (which
+// sets gElectrum), or for a SLIP-39 share its RS1024 checksum (which catches any 3 wrong
+// words) and a well-formed header.
 // Returns 1 if valid, 0 if not (after saying so), -1 if the message timed out (all wiped).
 static int checksumOk(int nwords) {
   bool ok;
@@ -1014,7 +1061,37 @@ static int checksumOk(int nwords) {
   uint8_t ent[32];
   ok = bip39_decode(gIdx, nwords, ent);
   secure_zero(ent, sizeof ent);
-  if (!ok && message("Checksum invalid", "One word is wrong.", "Pick it and retype it.", C_BAD)) return -1;
+  // Electrum's seeds use the same words with no BIP39 checksum; an HMAC of the phrase says
+  // whether it is one. A real Electrum seed passes the BIP39 checksum 1 time in 16, and a
+  // BIP39 phrase looks like an Electrum seed 1 time in about 240, so when both fit, ask.
+  buildMnemonic(nwords);
+  ElectrumType et = electrum_seed_type(gMnemonic, nwords);
+  secure_zero(gMnemonic, sizeof gMnemonic);
+  gElectrum = ELECTRUM_NONE;
+  if (et == ELECTRUM_STANDARD || et == ELECTRUM_SEGWIT) {
+    if (ok) {
+      clearScreen();
+      drawTitle("Which wallet?");
+      textAt(2, 18, "These words work both as");
+      textAt(2, 28, "an Electrum seed and as");
+      textAt(2, 38, "a standard (BIP39) seed.");
+      textAt(2, 54, "Which wallet made them?", C_DIM);
+      int c = choiceAt(SCR_H - 30, "Electrum", "Another wallet", 1);
+      if (c == MENU_TIMEOUT) return -1;
+      if (c == MENU_BACK) return 0;
+      if (c == 0) gElectrum = et;
+      return 1;
+    }
+    gElectrum = et;
+    if (message("Electrum seed", et == ELECTRUM_SEGWIT ? "Segwit wallet (bc1q...)," : "Standard wallet (1...),",
+                "Bitcoin only.", C_OK)) return -1;
+    return 1;
+  }
+  if (!ok && (et == ELECTRUM_2FA || et == ELECTRUM_2FA_SEGWIT)) {
+    if (message("Electrum 2FA seed", "Two-factor wallets are", "not supported.", C_BAD)) return -1;
+    return 0;
+  }
+  if (!ok && message(nwords == 13 ? "Not an Electrum seed" : "Checksum invalid", "One word is wrong.", "Pick it and retype it.", C_BAD)) return -1;
   return ok ? 1 : 0;
 }
 
@@ -1078,27 +1155,6 @@ static bool enterSeed(int nwords) {
       }
       // PS_BACK: stay on this word, typed letters kept
     } else { clearScreen(); return false; }    // WS_TIMEOUT: already wiped
-  }
-}
-
-// Two choices on rows y and y + 14, the cursor on a yellow bar. Returns 0 or 1,
-// MENU_BACK (hold) or MENU_TIMEOUT. For screens that explain something above the choice.
-static int choiceAt(int y, const char* a, const char* b, int sel) {
-  const char* items[2] = { a, b };
-  int prev = -1;
-  for (;;) {
-    if (sel != prev) {
-      for (int i = 0; i < 2; i++) {
-        tft.fillRect(0, y + 14 * i, SCR_W, 13, i == sel ? C_HI : C_BG);
-        textAt(4, y + 14 * i + 3, items[i], i == sel ? ST77XX_BLACK : C_FG);
-      }
-      prev = sel;
-    }
-    Ev e = waitEvent();
-    if (e == EV_CW || e == EV_CCW) sel ^= 1;
-    else if (e == EV_PRESS) return sel;
-    else if (e == EV_LONG) return MENU_BACK;
-    else if (e == EV_TIMEOUT) return MENU_TIMEOUT;
   }
 }
 
@@ -1176,7 +1232,7 @@ static int passKeyboard() {
       titleTag(tag);
       tft.fillRect(0, 11, SCR_W, 3, C_BG);
       drawPassText(14, true);
-      lineAt(2, 56, "Case matters. hold: back", C_DIM, 26);
+      lineAt(2, 56, gElectrum ? "Electrum ignores case." : "Case matters. hold: back", C_DIM, 26);
       char m[27]; snprintf(m, sizeof m, "Keys: %s  (next: %s)", PK_NAME[page], PK_NAME[(page + 1) % 4]);
       lineAt(2, 66, m, C_DIM, 26);
       tft.fillRect(0, 54, SCR_W, 2, C_BG);
@@ -1220,7 +1276,8 @@ static bool askPassphrase() {
     sel = a;
     if (a == 0) { secure_zero(gPass, sizeof gPass); return true; }
     if (a == 2) {
-      if (message("Optional: some wallets", "add a passphrase to the", "words. Not sure? Pick No.", C_HI)) return false;
+      if (gElectrum ? message("Electrum: \"Extend this", "seed with custom words\"", "Not sure? Pick No.", C_HI)
+                    : message("Optional: some wallets", "add a passphrase to the", "words. Not sure? Pick No.", C_HI)) return false;
       continue;
     }
     // type it, then look it over: a typo opens a different (empty) wallet, nothing warns
@@ -1246,7 +1303,7 @@ static bool askPassphrase() {
 // ---------------- Whole flows ----------------
 // BIP39 (12-24 words): words, passphrase, derive.
 static bool runBip39(int nwords) {
-  gSlip = false; gShareNo = 0;
+  gSlip = false; gShareNo = 0; gElectrum = ELECTRUM_NONE;
   wipeSecret();
   if (!enterSeed(nwords)) return false;
   if (!askPassphrase()) { wipeSecret(); return false; }
@@ -1256,7 +1313,7 @@ static bool runBip39(int nwords) {
 // SLIP-39 (20 or 33 words): one share or several. After each share the device says how
 // many more it needs (it reads the thresholds from the share itself), then the passphrase.
 static bool runSlip39(int nwords) {
-  gSlip = true; gShareNo = 1;
+  gSlip = true; gShareNo = 1; gElectrum = ELECTRUM_NONE;
   wipeSecret();
   slip39_init(&gShares);
   for (;;) {
@@ -1369,10 +1426,11 @@ void setup() {
 void loop() {
   // Pick what is written on the backup: 12 and 24 words (BIP39, nearly every wallet, in
   // their old places) and 20 (Trezor Safe 3 / Safe 5 / Model T and Keystone Shamir backups,
-  // SLIP-39) are one press away; the rare 15/18/21 and 33 sit behind "Other length" so the menu fits without scrolling.
+  // SLIP-39) are one press away; the rare 13 (older Electrum seeds), 15/18/21 and 33 sit behind
+  // "Other length" so the menu fits without scrolling. Electrum's 12-word seeds go in as 12 words.
   // BIP39 has no 20- or 33-word phrases, so the count alone tells the two kinds apart.
   static const char* const items[] = { "12 words", "24 words", "20 words", "Other length", "About" };
-  static const char* const other[] = { "15 words", "18 words", "21 words", "33 words" };
+  static const char* const other[] = { "13 words", "15 words", "18 words", "21 words", "33 words" };
   int s = (SCR_W >= 150) ? 2 : 1;        // double-size type; 12 chars x 12 px fit the 160 px screen
   int sel = runMenu("Backup words", items, 5, 0, s);
   switch (sel) {
@@ -1380,12 +1438,13 @@ void loop() {
     case 1: if (runBip39(24)) browseAddresses(); break;
     case 2: if (runSlip39(20)) browseAddresses(); break;
     case 3: {
-      int o = runMenu("Other length", other, 4, 0, s);   // hold = back to the main menu
-      if (o == 3) { if (runSlip39(33)) browseAddresses(); }
-      else if (o >= 0 && runBip39(15 + 3 * o)) browseAddresses();
+      int o = runMenu("Other length", other, 5, 0, s);   // hold = back to the main menu
+      if (o == 4) { if (runSlip39(33)) browseAddresses(); }
+      else if (o == 0) { if (runBip39(13)) browseAddresses(); }       // older Electrum seeds; checked as Electrum only
+      else if (o > 0 && runBip39(12 + 3 * o)) browseAddresses();
       break;
     }
-    case 4: message("SeedBox v0.5", "BIP39 12-24 words, SLIP39", "20/33 words, passphrase", C_FG); break;
+    case 4: message("SeedBox v0.6", "BIP39 12-24, SLIP39 20/33,", "Electrum, passphrase", C_FG); break;
     default: break;
   }
 }

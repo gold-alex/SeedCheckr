@@ -165,6 +165,7 @@
   function walletAddr(kind, pub33) {
     if (kind === 'btc-tr') return bech32('bc', [1, ...toWords(taprootKey(pub33))], true);
     if (kind === 'btc-wpkh') return bech32('bc', [0, ...toWords(hash160(pub33))]);
+    if (kind === 'btc-pkh') return base58check(cat(Uint8Array.of(0x00), hash160(pub33)));
     if (kind === 'ltc-wpkh') return bech32('ltc', [0, ...toWords(hash160(pub33))]);
     if (kind === 'ltc-pkh') return base58check(cat(Uint8Array.of(0x30), hash160(pub33)));
     if (kind === 'doge-pkh') return base58check(cat(Uint8Array.of(0x1e), hash160(pub33)));
@@ -311,8 +312,10 @@
     cardanoBase: (pay, stake) => bech32('addr', toWords(cat(Uint8Array.of(0x01), pay, stake))),
     cardanoStake: (stake) => bech32('stake', toWords(cat(Uint8Array.of(0xe1), stake))),
     // account extended public key from a 0x70-0x73 record: fp(4) || chain code(32) || pubkey(33)
-    xpub: (rec, version, account = 0) => base58check(cat(Uint8Array.of(version >>> 24, (version >>> 16) & 255, (version >>> 8) & 255, version & 255, 3),
-      rec.slice(0, 4), Uint8Array.of(0x80, 0, 0, account), rec.slice(4, 36), rec.slice(36, 69))),
+    xpub: (rec, version, account = 0) => addr.xpubAt(rec, version, 3, 0x80000000 + account),
+    // the same at any depth and child number (Electrum: its root, depth 0; or m/0', depth 1)
+    xpubAt: (rec, version, depth, child) => base58check(cat(Uint8Array.of(version >>> 24, (version >>> 16) & 255, (version >>> 8) & 255, version & 255, depth),
+      rec.slice(0, 4), Uint8Array.of(child >>> 24, (child >>> 16) & 255, (child >>> 8) & 255, child & 255), rec.slice(4, 36), rec.slice(36, 69))),
   };
   const XPUB = 0x0488b21e, YPUB = 0x049d7cb2, ZPUB = 0x04b24746;
 
@@ -598,6 +601,23 @@
           }
           if (type === 0x72) add('Bitcoin wallet (nested segwit, every address)', shown, ex, wallet('btc', 'compat', 'BTC', 'bitcoin'), { replaces: ['Bitcoin nested segwit (3...)'] });
           if (type === 0x73) add('Bitcoin Cash wallet (every address)', shown, 'https://blockchair.com/bitcoin-cash/xpub/', wallet('bch', 'normal', 'BCH', 'bitcoin-cash'), { replaces: ['Bitcoin Cash (BCH wallets)'] });
+          break;
+        }
+        // ---- Electrum wallets (payload v2; app.js makes the record from it): 0x81 standard, the root
+        //      key, P2PKH at m/0/i and m/1/i; 0x82 segwit, the key at m/0', P2WPKH. Haskoin scans
+        //      the whole wallet; if it does not answer, the page walks Electrum's gap limits itself ----
+        case 0x81: case 0x82: {
+          if (b.length !== 69) break;
+          const sw = type === 0x82, kind = sw ? 'btc-wpkh' : 'btc-pkh', depth = sw ? 1 : 0, child = sw ? 0x80000000 : 0;
+          const shown = addr.xpubAt(b, sw ? ZPUB : XPUB, depth, child), query = addr.xpubAt(b, XPUB, depth, child);
+          const apis = ['https://mempool.space/api/address/', 'https://blockstream.info/api/address/'];
+          add('Bitcoin, Electrum wallet (' + (sw ? 'segwit' : 'standard') + ', every address)', shown, 'https://blockchair.com/bitcoin/xpub/', () => firstOk(['haskoin', 'scan'], async (src) => {
+            if (src === 'haskoin') return haskoin(query, 'btc', sw ? 'segwit' : 'normal', 'BTC', 'bitcoin');
+            const w = await scanWallet(b, kind, (a) => firstOk(apis, (u) => utxoQuery(u, a, 'BTC')), [20, 10], 5);
+            return { holdings: [h('BTC', units(w.sats, 8), 'bitcoin')], others: 0, partial: null, note: w.used ? w.used + ' addresses used' : null };
+          }));
+          // a standard wallet's coins from before August 2017 were copied onto Bitcoin Cash (Electron Cash opens the same seed)
+          if (!sw) add('Bitcoin Cash, Electrum wallet (2017 fork)', shown, 'https://blockchair.com/bitcoin-cash/xpub/', () => haskoin(query, 'bch', 'normal', 'BCH', 'bitcoin-cash'));
           break;
         }
         // ---- Bitcoin native segwit accounts 2 and 3 (m/84'/0'/1', m/84'/0'/2'): two account keys ----
